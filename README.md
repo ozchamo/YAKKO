@@ -1,4 +1,4 @@
-# yako
+# yakko
 
 Yet another KVM/Konfigurator for OpenShift
 
