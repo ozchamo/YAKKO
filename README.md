@@ -1,4 +1,4 @@
-# yako
+# yakko
 
 Yet another KVM/Konfigurator for OpenShift
 
@@ -41,7 +41,7 @@ I could, I chose not to. I actually pulled out a couple of lines where I did use
 - Hey Ozchamo, what if I have two boxes and I want to spread the load?
 I want to cook that too. I have two boxes, Large and medium. My dream is to turn the medium box into a CNV node.
 - Hey Ozchamo, what are the minimum requirements?
-I'm guessing you need 48GB to be somewhat comfy for a full blow 3+2 node cluster. I have installed a 1+2 on 24GB ceasilybut that was with OCP 4.3. 4.5 doesn't like 2+1 out of the box, further experimentation required.
+I'm guessing you need 48GB to be somewhat comfy for a full blown 3+2 node cluster. I have installed a 1+2 on 24GB easily but that was with OCP 4.3. 4.5 doesn't like 2+1 out of the box, further experimentation required.
 - Hey Ozchamo, is it AUTOMATIC?
 It seems to be after you master the basics. Who doesn't want to rebuild OCP all the time?
 
