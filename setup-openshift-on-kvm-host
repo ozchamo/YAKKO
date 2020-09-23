@@ -20,8 +20,7 @@
 
 AUTOSETUP=0 # 1 is Auto, 0 is manual
 
-#OCPVMDISKS=/var/lib/libvirt/images
-OCPVMDISKS=/mnt/VMs
+OCPVMDISKDIR=/var/lib/libvirt/images
 OCPSSHKEY=~/.ssh/id_rsa_ocp
 OCPWGETTMP=/tmp/ocpsetupwget.tmp
 
@@ -132,7 +131,7 @@ print-cluster-info() {
 	if [ $RESULT -eq 0 ] 
 	then
 		echo
-		echo "The console of cluster $CLUSTERNAME appears to operational:"
+		echo "The console of cluster $CLUSTERNAME appears to be operational:"
 		echo
 		echo "Cluster web console:  `${OCPINSTALLSOURCE}/oc whoami --show-console`"
 		echo "kubeadmin password:   `cat $CLUSTERSETUPDIR/auth/kubeadmin-password`"
@@ -223,7 +222,7 @@ then
 			fi
 		fi
 	else
-		if [ -z "$OCPINSTALLCODE" ]
+		if [ ! -z "$OCPINSTALLCODE" ]
 		then	
 			#if there was an install code registered in CLUSTERCONFIG file then the installer did all it could.
 			print-cluster-info 		
@@ -278,7 +277,6 @@ export KUBECONFIG=${CLUSTERSETUPDIR}/auth/kubeconfig
 
 
 #VIRTUALISATION IS MANDATORY THE FIRST TIME WE RUN THIS
-#dnf list installed libvirt > /dev/null 2>&1  
 systemctl status libvirtd --no-pager > /dev/null 2>&1
 
 if [ $? -ne 0 ]
@@ -302,19 +300,16 @@ then
 fi
 
 
-
 if [ -r PULLSECRET ]
 then
-	execute-stage "Use saved pull secret" && {
-
-		PULLSECRET=`cat PULLSECRET`
-	}
+        execute-stage "Use saved pull secret" && PULLSECRET=`cat PULLSECRET`
 else
 	echo
-	echo "Please copy/paste pull-secret from https://cloud.redhat.com/openshift/install/metal"
-	echo
-	read PULLSECRET
-	echo $PULLSECRET > PULLSECRET
+        echo "There is no OCP Pull Secret saved (file PULLSECRET)."
+        echo "Please copy/paste pull secret from https://cloud.redhat.com/openshift/install/metal"
+        echo
+        read PULLSECRET
+        echo $PULLSECRET > PULLSECRET
 fi
 
 
@@ -334,7 +329,7 @@ execute-stage "Virtual Network Configuration" && {
 	virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
 	virsh net-undefine ${NETWORKNAME} > /dev/null 2>&1
 	
-	NETWORKTYPE=1 #Change to 0 when BRIDGE is supported
+	NETWORKTYPE=1 # Query when BRIDGE is supported. Not yet ;)
 	echo Only NAT is supported for now
 	if [ $NETWORKTYPE != 1 -a $NETWORKTYPE != 2 ]
 	then
@@ -647,9 +642,48 @@ execute-stage "HTTP Server for install" && {
 
 
 execute-stage "Changing Firewall rules" && { 
+
 	echo "Terrible, not implemented yet, just switching the Firewall off :)"
 	systemctl disable firewalld
+
 }
+
+
+[ -r OCPVMDISKDIR ] && OCPVMDISKDIR=`cat OCPVMDISKDIR`
+
+execute-stage "Change designated directory for OCP VM images ($OCPVMDISKDIR)" && {
+
+	while [ 1 ]
+	do
+		echo -n "Enter the directory where you wish to place the OCP VM disks: "
+		read OCPALTVMDISKDIR
+
+		[ -e "$OCPALTVMDISKDIR" -a -d  "$OCPALTVMDISKDIR" ]  && break
+
+		if [ ! -e "$OCPALTVMDISKDIR" ] 
+		then 
+			mkdir -p "$OCPALTVMDISKDIR" > /dev/null 2>&1
+			if [ $? -ne 0 ]
+			then
+				echo "Invalid directory path. Please re-enter..."
+				continue
+			else
+				echo "Created directory $OCPALTVMDISKDIR for VM storage."
+				break
+			fi
+		fi
+	done
+
+	OCPVMDISKDIR="$OCPALTVMDISKDIR"
+	echo $OCPALTVMDISKDIR > OCPVMDISKDIR #We write this into a file for later easy alteration
+
+}
+[ -r OCPVMDISKDIR ] && {
+	echo "Using VM directory configuration found in file OCPVMDISKDIR."
+	echo "to revert to KVM default, you will need to delete this file."
+}
+echo "Using "$OCPVMDISKDIR" as the directory for OCP VM storage"
+
 
 execute-stage "OCP Cluster Configuration" && {
 
@@ -714,7 +748,7 @@ execute-stage "OCP Bootstrap host configuration" && {
 		--memory 4096 \
 		--vcpus 2 \
  		--cpu host \
-		--disk path=${OCPVMDISKS}/bootstrap.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
+		--disk path=${OCPVMDISKDIR}/bootstrap.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
 		--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/bootstrap.ign ip=dhcp rd.neednet=1" \
 		--os-type=linux \
 		--os-variant=rhel8-unknown \
@@ -734,7 +768,7 @@ execute-stage "OCP Master host configuration" && {
                 --memory 8192 \
                 --vcpus 4 \
                 --cpu host \
-                --disk path=${OCPVMDISKS}/master-0.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
+                --disk path=${OCPVMDISKDIR}/master-0.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
                 --install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/master.ign ip=dhcp rd.neednet=1" \
                 --os-type=linux \
                 --os-variant=rhel8-unknown \
@@ -748,7 +782,7 @@ execute-stage "OCP Master host configuration" && {
                 --memory 8192 \
                 --vcpus 4 \
                 --cpu host \
-                --disk path=${OCPVMDISKS}/master-1.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
+                --disk path=${OCPVMDISKDIR}/master-1.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
                 --install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/master.ign ip=dhcp rd.neednet=1" \
                 --os-type=linux \
                 --os-variant=rhel8-unknown \
@@ -762,7 +796,7 @@ execute-stage "OCP Master host configuration" && {
                 --memory 8192 \
                 --vcpus 4 \
                 --cpu host \
-                --disk path=${OCPVMDISKS}/master-2.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
+                --disk path=${OCPVMDISKDIR}/master-2.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
                 --install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/master.ign ip=dhcp rd.neednet=1" \
                 --os-type=linux \
                 --os-variant=rhel8-unknown \
@@ -782,7 +816,7 @@ execute-stage "OCP Worker host configurations" && {
                 --memory 6144\
                 --vcpus 2 \
                 --cpu host \
-                --disk path=${OCPVMDISKS}/worker-0.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
+                --disk path=${OCPVMDISKDIR}/worker-0.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
                 --install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/worker.ign ip=dhcp rd.neednet=1" \
                 --os-type=linux \
                 --os-variant=rhel8-unknown \
@@ -797,7 +831,7 @@ execute-stage "OCP Worker host configurations" && {
                 --memory 6144\
                 --vcpus 2 \
                 --cpu host \
-                --disk path=${OCPVMDISKS}/worker-1.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
+                --disk path=${OCPVMDISKDIR}/worker-1.${CLUSTERNAME}.localdomain.qcow2,size=10,bus=virtio,format=qcow2 \
                 --install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/worker.ign ip=dhcp rd.neednet=1" \
                 --os-type=linux \
                 --os-variant=rhel8-unknown \
