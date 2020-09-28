@@ -32,8 +32,8 @@ mkdir -p $IMAGEREPO > /dev/null 2>&1
 echo '<H1>OCP SETUP WEB SERVER is working!</H1>' > $IMAGEREPO/index.html # to have a test file there...
 
 
-MASTERMEMORY=8192 # Recommended 8192. 6000 not enough
-WORKERMEMORY=8192 # Recommended ... 2048!? Worked well with 5Gi. Setting up as 8 to do some real work
+MASTERMEMORY=10000 # Recommended 8192. 6000 not enough
+WORKERMEMORY=10000 # Recommended ... 2048!? Worked well with 5Gi. Setting up as 8 to do some real work
 MASTERvCPUS=4 # Recommended 4
 WORKERvCPUS=2 # Recommended 2
 
@@ -122,6 +122,7 @@ execute-stage() {
 
 
 check-cluster-state() {
+	# if $1 is 0, don't print state, if $1 is 1 print state
 
 	# This is only executed at the end of the process or on subsequent calls
 	# we can use the logic in ocp-setup-env to avoid figuring things out again
@@ -132,27 +133,47 @@ check-cluster-state() {
 
 	# If the web console is available, offer info for it regardless of the output above
 	wget -O $OCPWGETTMP `oc whoami --show-console` --no-check-certificate > /dev/null 2>&1
-	return $?
-}
+	RESULTCONSOLE=$?
 
-print-cluster-info() {
+	wget -O $OCPWGETTMP `oc whoami --show-server` --no-check-certificate > /dev/null 2>&1
+	RESULTSERVER=$?
 
-	check-cluster-state
-	RESULT=$?
+	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=0
+	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=1
+	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=2
+	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=3
+		
+	if [ $1 -ne 0 ] 
+	then 
+		# we are asked to print state
 
-	if [ $RESULT -eq 0 ] 
-	then
 		echo
-		echo "The console of cluster $CLUSTERNAME appears to be operational:"
+		echo CLUSTER: $CLUSTERNAME
 		echo
-		echo "Cluster web console:  `${OCPINSTALLSOURCE}/oc whoami --show-console`"
-		echo "kubeadmin password:   `cat $CLUSTERSETUPDIR/auth/kubeadmin-password`"
-	else
-		echo "The console does not appear to be accessible or there is no console active yet."
+
+		if [ $OCPACCESSSTATUS -eq 3 ]
+		then 
+			echo "The cluster does not appear to be accessible or there is no console active yet."
+		else
+			if [ $OCPACCESSSTATUS -eq 0 ] 
+			then
+				echo "The console and API server appear to be operational:"
+			elif [ $OCPACCESSSTATUS -eq 1 ]
+			then
+				echo "The console appears to be operational, the API server does not:"
+			elif [ $OCPACCESSSTATUS -eq 2 ]
+			then
+				echo "The API server appears to be operational, the console does not:"
+			fi
+			echo
+			echo "Web console:  `${OCPINSTALLSOURCE}/oc whoami --show-console`"
+			echo "API server:   `${OCPINSTALLSOURCE}/oc whoami --show-server`"
+			echo "kubeadmin password:   `cat $CLUSTERSETUPDIR/auth/kubeadmin-password`"
+		fi
+		echo
 	fi
-	echo
 	
-	return $RESULT
+	return $OCPACCESSSTATUS
 }
 
 
@@ -238,7 +259,7 @@ then
 		if [ ! -z "$OCPINSTALLCODE" ]
 		then	
 			#if there was an install code registered in CLUSTERCONFIG file then the installer did all it could.
-			print-cluster-info 		
+			check-cluster-state 1
 			exit
 		fi
 	fi
@@ -250,7 +271,7 @@ then
 		echo "You should skip to this stage - automatic configuration from hereon is not possible."
 		AUTOSETUP=0
 	else 
-		check-cluster-state
+		check-cluster-state 0
 		if [  $? -eq 0 ]
 		then
 			echo 
@@ -1038,7 +1059,7 @@ execute-stage "OCP wait for install to complete" $YES && {
 		echo Cluster has `${OCPINSTALLSOURCE}/oc get nodes | egrep "worker|master" | wc -l` nodes and `${OCPINSTALLSOURCE}/oc get co | awk '{ print $3 }' | grep True | wc -l` operators up 
 	fi
 	
-	print-cluster-info
+	check-cluster-state 1
 
 }
 
