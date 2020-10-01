@@ -1,0 +1,1220 @@
+#!/bin/bash
+#set -x
+
+###########################################################################
+# YAKKO - Yet another KVM Konfigurator for OpenShift
+# AUTHOR: Daniel Cifuentes
+# 
+# A COVID Pandemic project - Est. 2020
+###########################################################################
+
+# Inspirational documentation for this:
+# https://github.com/eitchugo/openshift-libvirt/blob/master/OpenShift_4_libvirt_install_1_master.md
+
+# Automatic setup state keeper
+AUTOSETUP=0 # 1 is Auto, 0 is manual
+
+# A few placeholders
+OCPVMDISKDIR=/var/lib/libvirt/images
+OCPSSHKEY=~/.ssh/id_rsa_ocp
+OCPWGETTMP=/tmp/ocpsetupwget.tmp
+OCPDOMAIN=localdomain  # Placeholder, later to change interactively
+OCPSETUPDIR=/OCP-SETUP
+IMAGEREPO=${OCPSETUPDIR}/images # The webserver will serve from here. oc and openshift-install are here already
+DEVBACKUPDIR=/mnt/YAKKO-BACKUP
+
+# Some initial OCP Cluster settings - these could later be asked
+MASTERMEMORY=8192 # Recommended 8192. 6000 not enough
+WORKERMEMORY=8192 # Recommended ... 2048!? Worked well with 5Gi. Setting up as 8 to do some real work
+MASTERvCPUS=4 # Recommended 4
+WORKERvCPUS=2 # Recommended 2
+CLUSTERSIZE=5 #See below, prepping for the future, 3 is 1+2, 5 is 3+2, 6 & 7? will see
+[ $CLUSTERSIZE -eq 3 ] && NODELIST="master-0 worker-0 worker-1"
+[ $CLUSTERSIZE -eq 5 ] && NODELIST="master-0 master-1 master-2 worker-0 worker-1"
+
+#Just in case I forget
+YES=0
+NO=1
+
+
+################ A FEW REUSABLE FUNCTIONS ################################################
+
+print-in-green() {
+        tput setaf 2;tput bold
+	echo "$*"
+        tput sgr0
+}
+
+
+query-to-proceeed() {
+
+	# $1 is the string to display
+	# $2 is the "skip" value
+
+	echo _______________________________________________________________________________________
+	echo
+	print-in-green  "STAGE: [$1]  (time: `date +%H:%M`)"
+	echo
+
+	if [ $AUTOSETUP -eq 1 ]
+	then 
+		return 0
+	fi
+
+	while [ 1 ]
+	do
+		if [ -z "$2" ]
+		then
+			echo -n "$1 - Proceed (yes/no)? [y/n] "
+		else
+			echo -n "$1 - Proceed (yes/no/skip)? [y/n/s] "
+		fi
+		read RESPONSE
+
+		if [ "$RESPONSE" == "y" -o "$RESPONSE" == "Y" ]
+		then 
+			return 0
+		elif [ "$RESPONSE" == "n" -o "$RESPONSE" == "N" ]
+		then
+			return 1 # 1 = false!
+			break
+		elif [ ! -z "$2" ] && [ "$RESPONSE" == "s" -o "$RESPONSE" == "S" ]
+		then
+			return $2 # The value passed for choosing "skip"
+		else
+			echo "Invalid reponse [$RESPONSE]."
+		fi
+	done
+}
+
+
+check-cluster-state() {
+	# if $1 is 0, don't print state, if $1 is 1 print state
+
+	# This is only executed at the end of the process or on subsequent calls
+	# we can use the logic in ocp-setup-env to avoid figuring things out again
+
+	source CLUSTERCONFIG
+	OCPINSTALLSOURCE=$IMAGEREPO/$OCPINSTALLVERSION
+	. ${OCPSETUPDIR}/ocp-setup-env > /dev/null
+
+	# If the web console is available, offer info for it regardless of the output above
+	RESULTCONSOLE=1
+	oc whoami --show-console > /dev/null 2>&1
+	if [ $? -eq 0 ]
+	then 
+		wget -O $OCPWGETTMP `oc whoami --show-console` --no-check-certificate > /dev/null 2>&1
+		RESULTCONSOLE=$?
+	fi
+
+	RESULTSERVER=1
+	oc whoami --show-server > /dev/null 2>&1
+	if [ $? -eq 0 ]
+	then 
+		wget -O $OCPWGETTMP `oc whoami --show-server` --no-check-certificate > /dev/null 2>&1
+		RESULTSERVER=$?
+	fi
+
+	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=0
+	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=1
+	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=2
+	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=3
+		
+	if [ $1 -ne 0 ] 
+	then 
+		# we are asked to print state
+
+		echo
+		echo CLUSTER: $CLUSTERNAME
+		echo
+
+		if [ $OCPACCESSSTATUS -eq 3 ]
+		then 
+
+			virsh list | egrep "master|worker" >/dev/null 2>&1
+			if [ $? -ne 0 ]
+			then
+				echo "All nodes of the cluster are currently powered off."
+			else
+				echo "ERROR: The cluster does not appear to be accessible or there is no console active yet."
+				echo
+
+				echo "You can check the status of the masters by issuing: "
+				echo "ssh -i $OCPSSHKEY core@worker-0.${CLUSTERNAME}.${OCPDOMAIN}  journalctl -b -f -u crio.service"
+				echo
+				exit
+			fi	
+		else
+			if [ $OCPACCESSSTATUS -eq 0 ] 
+			then
+				echo "The console and API server appear to be operational:"
+			elif [ $OCPACCESSSTATUS -eq 1 ]
+			then
+				echo "The console appears to be operational, the API server does not:"
+			elif [ $OCPACCESSSTATUS -eq 2 ]
+			then
+				echo "The API server appears to be operational, the console does not:"
+			fi
+			echo
+			echo "Web console:  `${OCPINSTALLSOURCE}/oc whoami --show-console`"
+			echo "API server:   `${OCPINSTALLSOURCE}/oc whoami --show-server`"
+			echo "kubeadmin password:   `cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password`"
+		fi
+		echo
+	fi
+	
+	return $OCPACCESSSTATUS
+}
+
+
+delete-deployment()
+{
+
+	AUTOSETUP=0
+
+	query-to-proceeed "Delete cluster ${CLUSTERNAME} and all associated configuration" && {
+		CLUSTERSETUPDIR=${OCPSETUPDIR}/install-${CLUSTERNAME}
+
+		echo Cleaning up network...
+		virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
+		virsh net-undefine ${NETWORKNAME} > /dev/null 2>&1
+
+		echo Delete all associated virtual machines...
+		for VMNAME in `virsh list --all | grep "${CLUSTERNAME}" | awk '{ print $2}' `
+		do 
+			echo Deleting VM $VMNAME
+			virsh destroy $VMNAME
+			virsh undefine --domain $VMNAME --remove-all-storage
+		done
+
+		echo "Deleting ssh key and removing cluster hosts from ssh known hosts..."
+		rm -r ${OCPSSHKEY} > /dev/null 2>&1
+		rm -r ${OCPSSHKEY}.pub > /dev/null 2>&1
+
+		for nodename in ${NODELIST}
+		do
+			sed -i "/$nodename.${CLUSTERNAME}.${OCPDOMAIN}/d" /root/.ssh/known_hosts
+		done
+
+
+		echo Deleting Network Manager configuration...
+		rm /etc/NetworkManager/dnsmasq.d/${CLUSTERNAME}.conf > /dev/null 2>&1
+		sudo systemctl restart NetworkManager
+		echo
+
+		echo Deleting Load Balancer service and info...
+		systemctl stop haproxy
+		rm /etc/haproxy/haproxy.cfg > /dev/null 2>&1
+		systemctl restart haproxy
+		echo
+		
+		echo Deleting ignition files from the web server - the webserver will remain running...
+		rm $IMAGEREPO/*ign  > /dev/null 2>&1
+		echo
+
+		echo Deleting install files and configuration directory...
+		rm -rf $CLUSTERSETUPDIR > /dev/null 2>&1
+		rm ocp-setup-env > /dev/null 2>&1
+
+		rm .bootstrap-stage > /dev/null 2>&1
+		rm CLUSTERCONFIG
+
+		# AND LOTS OF CLEANING UP TO BE ADDED. MAYBE?
+	
+		echo
+		echo Exiting now. Restart to configure a new cluster...
+		echo
+	}
+}
+
+
+install-stage-libvirt() {
+	#VIRTUALISATION IS MANDATORY THE FIRST TIME WE RUN THIS
+	systemctl status libvirtd --no-pager > /dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "Installing LIBVIRT..."
+		dnf install libvirt
+		if [ $? -ne 0 ]
+		then 
+			echo "Failed to install libvirt - Exiting..."
+			exit
+		else
+			echo "Libvirt is now installed."
+		fi
+	fi
+
+	systemctl enable libvirtd --now > /dev/null 2>&1
+	if [ $? -ne 0 ]
+	then
+		echo "Failed to enable libvirt - Exiting..."
+		exit
+	fi
+}
+
+
+install-stage-pullsecret() {
+	if [ -r PULLSECRET ]
+	then
+	        query-to-proceeed "Use saved pull secret" $YES && PULLSECRET=`cat PULLSECRET`
+	else
+		echo
+	        echo 'There is no OCP Pull Secret saved (file PULLSECRET).'
+	        echo "Please copy/paste pull secret from https://cloud.redhat.com/openshift/install/metal"
+	        echo
+	        read PULLSECRET
+	        echo $PULLSECRET > PULLSECRET
+	fi
+}
+
+
+install-stage-sshclient() {
+	query-to-proceeed "Create SSH client configuration for OCP nodes" $NO  && {
+		#We clear a potential clash for ssh logins in .known_hosts
+		sed -i "/bootstrap.${CLUSTERNAME}.${OCPDOMAIN}/d" /root/.ssh/known_hosts > /dev/null 2>/dev/null
+		ssh-keygen -t rsa -b 4096 -N '' -f $OCPSSHKEY
+		eval "$(ssh-agent -s)"
+		ssh-add $OCPSSHKEY
+	}
+}
+
+
+install-stage-virtualnetwork() {
+
+	query-to-proceeed "Configure Virtual Network" $NO && {
+
+		#52:54:00 is KVM/QEMU default
+		BOOTSTRAPMAC=52:54:00:b7:d0:3c
+		MASTER0MAC=52:54:00:f6:f8:09
+		MASTER1MAC=52:54:00:96:fe:20
+		MASTER2MAC=52:54:00:43:f0:c9
+		WORKER0MAC=52:54:00:ad:e4:33
+		WORKER1MAC=52:54:00:1d:1b:8a
+	
+		BASENETWORK=192.168.140
+		BOOTSTRAPIP=${BASENETWORK}.5
+		MASTER0IP=${BASENETWORK}.10
+		MASTER1IP=${BASENETWORK}.11
+		MASTER2IP=${BASENETWORK}.12
+		WORKER0IP=${BASENETWORK}.20
+		WORKER1IP=${BASENETWORK}.21
+	
+		NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml
+	
+		echo Cleaning up network...
+		virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
+		virsh net-undefine ${NETWORKNAME} > /dev/null 2>&1
+		
+		NETWORKTYPE=1 # Query when BRIDGE is supported. Not yet ;)
+		echo Only NAT is supported for now
+		#if [ $NETWORKTYPE != 1 -a $NETWORKTYPE != 2 ]
+		#then
+		#	echo -n 'Should this network be 1.NAT or 2.BRIDGE (1 or 2)? '
+		#	read NETWORKTYPE
+		#fi
+	
+		if [ $NETWORKTYPE == 1 ] # NAT
+		then
+			echo 'This script will create all infrastructure in the 192.168.140/24 subnet with preallocated IP address:'
+			echo Bootstrap - ${BOOTSTRAPIP}	
+			echo Masters - ${MASTER0IP} ${MASTER1IP} and ${MASTER2IP}
+			echo Workers - ${WORKER0IP} and ${WORKER1IP} 
+	
+			{
+				echo "<network>" 
+				echo "	<name>${NETWORKNAME}</name>"
+	
+ 				echo "	<forward mode='nat'>"
+				echo "		<nat>"
+				echo "			<port start='1024' end='65535'/>"
+				echo "		</nat>"
+				echo "	</forward>"
+	
+				echo "	<bridge name='virbr-ocp4' stp='on' delay='0'/>"
+	
+				echo "	<domain name='${CLUSTERNAME}.${OCPDOMAIN}' localOnly='yes'/>"
+				echo "	<dns>"
+				echo "		<forwarder domain='apps.${CLUSTERNAME}.${OCPDOMAIN}' addr='127.0.0.1'/>"
+				echo "		<host ip='${BASENETWORK}.1'>"
+				echo "			<hostname>api</hostname>"
+				echo "			<hostname>api-int</hostname>"
+				echo "		</host>"
+				echo "		<host ip='${MASTER0IP}'>"
+				echo " 	         	<hostname>etcd-0</hostname>"
+				echo "		</host>"
+				echo "		<host ip='${MASTER1IP}'>"
+				echo " 	         	<hostname>etcd-1</hostname>"
+				echo "		</host>"
+				echo "		<host ip='${MASTER2IP}'>"
+				echo " 	         	<hostname>etcd-2</hostname>"
+				echo "		</host>"
+	
+				# SRV Records are not required from OCP 4.4 onwards... But never mind
+	
+				echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERNAME}.${OCPDOMAIN}' target='etcd-0.${CLUSTERNAME}.${OCPDOMAIN}' port='2380' priority='0' weight='10'/>"
+				echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERNAME}.${OCPDOMAIN}' target='etcd-1.${CLUSTERNAME}.${OCPDOMAIN}' port='2380' priority='0' weight='10'/>"
+				echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERNAME}.${OCPDOMAIN}' target='etcd-2.${CLUSTERNAME}.${OCPDOMAIN}' port='2380' priority='0' weight='10'/>"
+				echo "	</dns>"
+				echo "	<ip address='${BASENETWORK}.1' netmask='255.255.255.0'>"
+   	 			echo "		<dhcp>"
+				echo "			<range start='${BASENETWORK}.5' end='${BASENETWORK}.254'/>"
+				echo "			<host mac='${BOOTSTRAPMAC}' name='bootstrap.${CLUSTERNAME}.${OCPDOMAIN}' ip='${BOOTSTRAPIP}'/>"
+				echo " 			<host mac='${MASTER0MAC}' name='master-0.${CLUSTERNAME}.${OCPDOMAIN}' ip='${MASTER0IP}'/>"
+				echo " 			<host mac='${MASTER1MAC}' name='master-1.${CLUSTERNAME}.${OCPDOMAIN}' ip='${MASTER1IP}'/>"
+				echo " 			<host mac='${MASTER2MAC}' name='master-2.${CLUSTERNAME}.${OCPDOMAIN}' ip='${MASTER2IP}'/>"
+				echo "			<host mac='${WORKER0MAC}' name='worker-0.${CLUSTERNAME}.${OCPDOMAIN}' ip='${WORKER0IP}'/>"
+				echo "			<host mac='${WORKER1MAC}' name='worker-1.${CLUSTERNAME}.${OCPDOMAIN}' ip='${WORKER1IP}'/>"
+				echo "		</dhcp>"
+				echo "	</ip>"
+				echo "</network>"
+	
+			} > $NETWORKXML
+		fi
+		
+		echo Defining network at $NETWORKXML
+		virsh net-define --file $NETWORKXML
+		[ $? -ne 0 ] && { echo "Error - exiting... Defined inactive networks are:"; virsh net-list --inactive; exit; }
+		
+		echo Starting network...
+		virsh net-start ${NETWORKNAME}
+		[ $? -ne 0 ] && { echo "Error - exiting..."; exit; }
+		
+		echo Setting network to start on boot...
+		virsh net-autostart ${NETWORKNAME}
+		[ $? -ne 0 ] && { echo "Error - exiting..."; exit; }
+	}
+}
+
+
+install-stage-dns() {
+
+	query-to-proceeed "Configure DNS"  $NO && {
+
+		echo Configuring dnsmask in NetworkManager
+		#Essentially, adding to /etc/NetworkManager/NetworkManager.conf
+		#[main]
+		#dns = dnsmasq
+		#With ansible it would be
+		#ansible localhost -m lineinfile -a 'path=/etc/NetworkManager/NetworkManager.conf regexp="^[main]" line="[main]"' > /dev/null
+		#ansible localhost -m lineinfile -a 'path=/etc/NetworkManager/NetworkManager.conf insertafter="[main]*" line="dns = dnsmasq"' > /dev/null
+
+		#REPLACE ANSIBLE CALLS
+		cat /etc/NetworkManager/NetworkManager.conf | grep "\[main\]" > /dev/null 2>&1
+		if [ $? -ne 0 ]
+		then
+			echo '\[main\]' >> /etc/NetworkManager/NetworkManager.conf
+		fi
+	
+		cat /etc/NetworkManager/NetworkManager.conf | grep "dns = dnsmasq" > /dev/null 2>&1
+		if [ $? -ne 0 ]
+		then
+			sed -i.bak '/\[main\]/ a dns = dnsmasq' /etc/NetworkManager/NetworkManager.conf
+		fi 
+	
+		#echo Adding dnsmasq entries...
+		rm /etc/NetworkManager/dnsmasq.d/ocp4* 2>/dev/null #Deleting old entries
+	
+		{
+			echo "server=/${CLUSTERNAME}.${OCPDOMAIN}/192.168.140.1"
+			echo "address=/.apps.${CLUSTERNAME}.${OCPDOMAIN}/192.168.140.1"
+		} > /etc/NetworkManager/dnsmasq.d/${CLUSTERNAME}.conf
+	
+		systemctl restart NetworkManager
+		
+		echo 
+		echo Starting DNS test:
+		host api-int.${CLUSTERNAME}.${OCPDOMAIN} 192.168.140.1
+		host etcd-0.${CLUSTERNAME}.${OCPDOMAIN} 192.168.140.1
+		host etcd-1.${CLUSTERNAME}.${OCPDOMAIN} 192.168.140.1
+		host etcd-2.${CLUSTERNAME}.${OCPDOMAIN} 192.168.140.1
+		host -t srv _etcd-server-ssl._tcp.${CLUSTERNAME}.${OCPDOMAIN} 192.168.140.1
+		
+		echo
+		echo "Testing the DNS from the host..."
+		host api.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1
+		host etcd-0.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1
+		host etcd-1.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1
+		host etcd-2.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1
+		host testing.apps.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1
+	}
+}
+
+	
+install-stage-haproxyandloadbalancer() {
+
+	query-to-proceeed "Configure HA Proxy/Load Balancer" $NO && {
+
+		echo Creating the HA Proxy Config...
+		echo
+		
+		{
+			echo "listen ${CLUSTERNAME}-api-server-6443"
+			echo "    bind 192.168.140.1:6443"
+			echo "    mode tcp"
+			echo "    balance source"
+			echo "    server master-0 ${MASTER0IP}:6443 check inter 1s"
+			echo "    server master-1 ${MASTER1IP}:6443 check inter 1s"
+			echo "    server master-2 ${MASTER2IP}:6443 check inter 1s"
+			echo "    server bootstrap ${BOOTSTRAPIP}:6443 check inter 1s"
+			echo 
+			echo "listen ${CLUSTERNAME}-machine-config-server-22623"
+			echo "    bind 192.168.140.1:22623"
+			echo "    mode tcp"
+			echo "    balance source"
+			echo "    server master-0 ${MASTER0IP}:22623 check inter 1s"
+			echo "    server master-1 ${MASTER1IP}:22623 check inter 1s"
+			echo "    server master-2 ${MASTER2IP}:22623 check inter 1s"
+			echo "    server bootstrap ${BOOTSTRAPIP}:22623 check inter 1s"
+			echo 
+			echo "listen ${CLUSTERNAME}-ingress-router-80"
+			echo "    bind 192.168.140.1:80"
+			echo "    mode tcp"
+			echo "    balance source"
+			echo "    server master-0 ${MASTER0IP}:80 check inter 1s"
+			echo "    server master-1 ${MASTER1IP}:80 check inter 1s"
+			echo "    server master-2 ${MASTER2IP}:80 check inter 1s"
+			echo "    server worker-0 ${WORKER0IP}:80 check inter 1s"
+			echo "    server worker-1 ${WORKER1IP}:80 check inter 1s"
+			echo 
+			echo "listen ${CLUSTERNAME}-ingress-router-443"
+			echo "    bind 192.168.140.1:443"
+			echo "    mode tcp"
+			echo "    balance source"
+			echo "    server master-0 ${MASTER0IP}:443 check inter 1s"
+			echo "    server master-1 ${MASTER1IP}:443 check inter 1s"
+			echo "    server master-2 ${MASTER2IP}:443 check inter 1s"
+			echo "    server worker-0 ${WORKER0IP}:443 check inter 1s"
+			echo "    server worker-1 ${WORKER1IP}:443 check inter 1s"
+	
+		} > /etc/haproxy/haproxy.cfg
+
+		setsebool -P haproxy_connect_any 1
+		systemctl restart haproxy
+		systemctl status haproxy --no-pager
+	
+		#If using a firewall on host, don't forget to allow connections to these ports on IP 192.168.140.1: 6443, 22623, 80 and 443.
+		#for simplicity, firewall is off on mine
+	}
+}
+
+
+install-stage-downloadocpbinaries() {
+
+	#For the below to happen OCPINSTALLVERSION would have been read from CLUSTERCONFIG
+	if [ ! -z "$OCPINSTALLVERSION"  ]
+	then
+	
+		if [ -d "$IMAGEREPO/$OCPINSTALLVERSION" ]
+		then
+			# We know what we are installing and we have the downloads
+			NEEDBINARIES=0
+			echo Binaries are already available ...
+		else 
+			NEEDBINARIES=1
+		fi
+	else
+		NEEDBINARIES=1
+	fi
+	
+	# Now we get on with downloading the OCP binaries
+	# NOTE: There can be discrepancies between the installer version (OCPGETCLIENTVERSION) and the RHCOS images version (OCPGETIMAGEVERSION)
+	#	This script will download the lot under OCPGETCLIENTVERSION to keep a single point reference. This seems to make sense 
+	#	based on what the OCP mirror offers.
+	# 	HOWEVER, outside of the DOWNLOAD section of the script, the version will be known as OCPINSTALLVERSION
+
+	if [ $NEEDBINARIES -eq 1 ]
+	then
+
+		query-to-proceeed "Download installer binaries and images" $NO && {
+	
+			# Get the OCP installer specifically for x86_64 
+			OCPPLATFORM=x86_64
+			OCPROOT=https://mirror.openshift.com/pub/openshift-v4/$OCPPLATFORM
+		
+			# This would get you the number for the latest version
+			OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/latest"
+			OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/latest/latest"
+	
+			wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt > /dev/null 2>&1
+		        OCPGETCLIENTVERSION=`cat $OCPWGETTMP | grep Version: | awk '{ print $2 }'`
+			
+			query-to-proceeed "Use latest OpenShift version available ($OCPGETCLIENTVERSION)?"
+	
+		        if [ $? -ne 0 ]
+		        then
+				# Query what client is desired
+				while [ 1 ]
+				do
+					echo -n  'Enter OCP INSTALLER CLIENT version you require, e.g. "4.5.6" (may not work btw...): ' 
+					read OCPGETCLIENTVERSION
+					OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/$OCPGETCLIENTVERSION"
+			
+					wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/sha256sum.txt >/dev/null 2>&1
+					if [ $? -ne 0 ]
+					then
+						echo "Invalid version $OCPGETCLIENTVERSION, no content available"
+					else
+						break
+					fi
+				done
+	
+				# Query what RHCOS is desired
+				while [ 1 ]
+				do
+					echo -n  'Enter OCP RHCOS version you require, e.g. "4.5.6" (may also not work btw...): ' 
+					 # this is harder because of how the mirror is laid out
+					read OCPGETIMAGEVERSION
+					VERSIONMAJOR=`echo $OCPGETIMAGEVERSION | cut -f1 -d.`
+					VERSIONMINOR=`echo $OCPGETIMAGEVERSION | cut -f2 -d.`
+					VERSIONMICRO=`echo $OCPGETIMAGEVERSION | cut -f3 -d.`
+					OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/$VERSIONMAJOR.$VERSIONMINOR/$OCPGETIMAGEVERSION"
+	
+ 					wget -O $OCPWGETTMP $OCPDOWNLOADIMAGE/sha256sum.txt >/dev/null 2>&1
+   	                             if [ $? -ne 0 ]
+   	                             then
+   	                                     echo "Invalid version $OCPGETIMAGEVERSION, no content available"
+   	                             else
+   	                                     break
+   	                             fi
+				done
+			fi
+	
+			# We remove the CLIENT word to make it less confusing if someone reads the CLUSTERCONFIG file
+			echo OCPINSTALLVERSION=$OCPGETCLIENTVERSION >> CLUSTERCONFIG
+		
+			cd $IMAGEREPO
+	
+			if [ ! -d "$OCPGETCLIENTVERSION" ]
+			then
+				# Note that this script bundles your client and RHCOS dependencies under the client version number
+	
+				mkdir $OCPGETCLIENTVERSION > /dev/null 2>&1
+				cd $OCPGETCLIENTVERSION 
+	
+				echo "Getting the OCP installer (for version $OCPGETCLIENTVERSION) --> $PWD"
+				wget $OCPDOWNLOADCLIENT/openshift-install-linux.tar.gz -O - | tar xz
+				[ $? -ne 0 ] && { "echo Error downloading *openshift-installer*, exiting..."; cd ..; rm -rf ${OCPGETCLIENTVERSION}; exit; } 
+		
+				echo "Getting the OCP client -> $PWD"
+				wget $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz -O - | tar xz 
+				[ $? -ne 0 ] && { "echo Error downloading *openshift-client*, exiting..."; cd ..; rm -rf ${OCPGETCLIENTVERSION}; exit; } 
+		
+				echo "Getting RHCOS installer files... -> $PWD"
+		
+				wget $OCPDOWNLOADIMAGE/rhcos-installer-initramfs.x86_64.img
+				[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; rm -rf ${OCPGETCLIENTVERSION}; exit; } 
+		
+				wget $OCPDOWNLOADIMAGE/rhcos-installer-kernel-x86_64
+				[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; rm -rf ${OCPGETCLIENTVERSION}; exit; } 
+			
+				wget $OCPDOWNLOADIMAGE/rhcos-installer.x86_64.iso
+				[ $? -ne 0 ] && { echo 'Error downloading *rhcos-installer*, exiting...'; cd ..; rm -rf ${OCPGETCLIENTVERSION}; exit; } 
+		
+				wget $OCPDOWNLOADIMAGE/rhcos-metal.x86_64.raw.gz
+				[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; rm -rf ${OCPGETCLIENTVERSION}; exit; } 
+			else
+				echo "OCP Version $OCPGETCLIENTVERSION is already downloaded..."
+				echo
+			fi
+		
+			cd ${OCPSETUPDIR}
+	
+			OCPINSTALLVERSION=$OCPGETCLIENTVERSION
+		}
+	fi
+}
+
+
+install-stage-httpserver() {
+	# Now that we know what we are running up, we can set the directory to provide the sources
+	# From the below dir, things will get cookin'
+	OCPINSTALLSOURCE=$IMAGEREPO/$OCPINSTALLVERSION
+	echo "OCP will be made available from $OCPINSTALLSOURCE"
+	echo
+
+	query-to-proceeed "Configure HTTP Server for install" $NO && {
+
+		echo '<H1>YAKKO WEB SERVER is working!</H1>' > $IMAGEREPO/index.html # to have a test file there...
+	
+		{
+			echo "Listen 192.168.140.1:8080"
+			echo "<VirtualHost 192.168.140.1:8080>"
+			echo "	DocumentRoot $IMAGEREPO"
+   	 		echo "	<Directory $IMAGEREPO>"
+   	    		echo "		Options Indexes FollowSymLinks"
+   	    		echo "		Require all granted"
+   	    		echo "		AllowOverride None"
+   	 		echo "	</Directory>"
+			echo "</VirtualHost>"
+	
+		} > /etc/httpd/conf.d/ocp4-build.conf
+	
+		systemctl restart httpd
+		systemctl enable httpd
+		
+		# Figure out which of these are required
+		# and needed to survive a reboot...
+		chcon  --user system_u --type httpd_sys_content_t -Rv $IMAGEREPO
+		semanage fcontext -a -t httpd_sys_content_t "$IMAGEREPO(/.*)?"
+		restorecon -Rv $IMAGEREPO
+	}
+}
+
+
+install-stage-changefirewall() {
+	query-to-proceeed "Change Firewall rules" $NO && { 
+
+		echo "Terrible, not implemented yet, just switching the Firewall off :)"
+		systemctl disable firewalld
+
+	}
+}
+
+
+install-stage-generateocpinstallerconfig() {
+
+	query-to-proceeed "Generate OCP Cluster Manifests and Ignition files" $NO && {
+
+		echo Writing "ocp-setup-env" script for administration. Run \"source ${OCPSETUPDIR}/ocp-setup-env\" to load post-install...
+		{
+			echo "PATH=\$PATH:${OCPINSTALLSOURCE}" 
+			echo export KUBECONFIG=${CLUSTERSETUPDIR}/auth/kubeconfig
+		}  > ocp-setup-env
+		chmod +x ocp-setup-env
+
+		SSHPUBKEY=`cat $OCPSSHKEY.pub`
+	
+		echo
+		echo "Generating INSTALL CONFIG file..."
+		
+		{
+			echo "apiVersion: v1"
+			echo "baseDomain: ${OCPDOMAIN}"
+			echo "compute:"
+			echo "- hyperthreading: Enabled"
+			echo "  name: worker"
+			echo "  replicas: 0"
+			echo "controlPlane:"
+			echo "  hyperthreading: Enabled"
+			echo "  name: master"
+			echo "  replicas: 3"
+			echo "metadata:"
+			echo "  name: ${CLUSTERNAME}"
+			echo "networking:"
+			echo "  clusterNetwork:"
+			echo "  - cidr: 10.128.0.0/14 "
+			echo "    hostPrefix: 23"
+			echo "  networkType: OpenShiftSDN"
+			echo "  serviceNetwork:"
+			echo "  - 172.30.0.0/16"
+			echo "platform:"
+			echo "  none: {} "
+			echo "fips: false "
+			echo "pullSecret: '$PULLSECRET' "
+			echo "sshKey: '$SSHPUBKEY'"
+	
+		} > ${CLUSTERSETUPDIR}/install-config.yaml
+	
+		echo
+		echo Creating manifests...
+		$OCPINSTALLSOURCE/openshift-install create manifests --dir=$CLUSTERSETUPDIR
+		sed -i -r 's/(mastersSchedulable: ).*/\1False/' $CLUSTERSETUPDIR/manifests/cluster-scheduler-02-config.yml
+	
+		echo
+		echo Creating OCP Cluster ignition files required for node configuration
+		$OCPINSTALLSOURCE/openshift-install create ignition-configs --dir=$CLUSTERSETUPDIR
+		cp $CLUSTERSETUPDIR/*.ign $IMAGEREPO
+		chmod 644 $IMAGEREPO/*.ign
+	}
+}
+
+
+install-stage-designatevmdirectory() {
+	[ -r OCPVMDISKDIR ] && OCPVMDISKDIR=`cat OCPVMDISKDIR`
+
+	query-to-proceeed "Use designated directory for OCP VM images ($OCPVMDISKDIR)" $YES || {
+	
+		while [ 1 ]
+		do
+			echo -n "Enter the directory where you wish to place the OCP VM disks: "
+			read OCPALTVMDISKDIR
+	
+			[ -e "$OCPALTVMDISKDIR" -a -d  "$OCPALTVMDISKDIR" ]  && break
+	
+			if [ ! -e "$OCPALTVMDISKDIR" ] 
+			then 
+				mkdir -p "$OCPALTVMDISKDIR" > /dev/null 2>&1
+				if [ $? -ne 0 ]
+				then
+					echo "Invalid directory path. Please re-enter..."
+					continue
+				else
+					echo "Created directory $OCPALTVMDISKDIR for VM storage."
+					break
+				fi
+			fi
+		done
+	
+		OCPVMDISKDIR="$OCPALTVMDISKDIR"
+		echo $OCPALTVMDISKDIR > OCPVMDISKDIR #We write this into a file for later easy alteration
+	
+	}
+
+	[ -r OCPVMDISKDIR ] && {
+		echo "Using VM directory configuration found in file OCPVMDISKDIR."
+		echo "to revert to KVM default, you will need to delete this file."
+	}
+
+	echo "Using "$OCPVMDISKDIR" as the directory for OCP VM storage"
+
+}
+
+
+install-stage-configurebootstraphost() {
+
+	query-to-proceeed "Configure OCP Bootstrap host" $NO && {
+	
+		echo "Building boostrap node: "
+		virt-install \
+			--memory 4096 \
+			--vcpus 2 \
+ 			--cpu host \
+			--disk path=${OCPVMDISKDIR}/bootstrap.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=10,bus=virtio,format=qcow2 \
+			--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/bootstrap.ign ip=dhcp rd.neednet=1" \
+			--os-type=linux \
+			--os-variant=rhel8-unknown \
+ 			--graphics vnc \
+			--network network=${NETWORKNAME},mac=${BOOTSTRAPMAC} \
+			--noautoconsole --wait -1 \
+ 			--name bootstrap.${CLUSTERNAME}.${OCPDOMAIN} 
+
+	}
+}
+
+
+install-stage-configureocpmasterhosts() {
+
+	query-to-proceeed "Configure OCP Master hosts" $NO && {
+
+		echo "Building master node(s): "
+		virt-install \
+			--memory $MASTERMEMORY \
+			--vcpus $MASTERvCPUS \
+			--cpu host \
+			--disk path=${OCPVMDISKDIR}/master-0.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=10,bus=virtio,format=qcow2 \
+			--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/master.ign ip=dhcp rd.neednet=1" \
+			--os-type=linux \
+			--os-variant=rhel8-unknown \
+			--graphics vnc \
+			--network network=${NETWORKNAME},mac=${MASTER0MAC}  \
+			--noautoconsole --wait -1 \
+			--name master-0.${CLUSTERNAME}.${OCPDOMAIN}
+	
+		echo
+		virt-install \
+			--memory $MASTERMEMORY \
+			--vcpus $MASTERvCPUS \
+			--cpu host \
+			--disk path=${OCPVMDISKDIR}/master-1.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=10,bus=virtio,format=qcow2 \
+			--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/master.ign ip=dhcp rd.neednet=1" \
+			--os-type=linux \
+			--os-variant=rhel8-unknown \
+			--graphics vnc \
+			--network network=${NETWORKNAME},mac=${MASTER1MAC}  \
+			--noautoconsole --wait -1 \
+			--name master-1.${CLUSTERNAME}.${OCPDOMAIN}
+
+		echo
+		virt-install \
+			--memory $MASTERMEMORY \
+			--vcpus $MASTERvCPUS \
+			--cpu host \
+			--disk path=${OCPVMDISKDIR}/master-2.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=10,bus=virtio,format=qcow2 \
+			--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/master.ign ip=dhcp rd.neednet=1" \
+			--os-type=linux \
+			--os-variant=rhel8-unknown \
+			--graphics vnc \
+			--network network=${NETWORKNAME},mac=${MASTER2MAC}  \
+			--noautoconsole --wait -1 \
+			--name master-2.${CLUSTERNAME}.${OCPDOMAIN}
+	}
+}
+
+
+install-stage-configureocpworkerhosts() {
+
+	query-to-proceeed "Configure OCP Worker hosts" $NO && {
+
+		echo "Building worker nodes: "
+
+		virt-install \
+			--memory $WORKERMEMORY \
+			--vcpus $WORKERvCPUS \
+			--cpu host \
+			--disk path=${OCPVMDISKDIR}/worker-0.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=10,bus=virtio,format=qcow2 \
+			--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/worker.ign ip=dhcp rd.neednet=1" \
+			--os-type=linux \
+			--os-variant=rhel8-unknown \
+			--graphics vnc \
+			--network network=${NETWORKNAME},mac=${WORKER0MAC} \
+			--noautoconsole --wait -1 \
+			--name worker-0.${CLUSTERNAME}.${OCPDOMAIN}
+	
+		echo	
+		virt-install \
+			--memory $WORKERMEMORY \
+			--vcpus $WORKERvCPUS \
+			--cpu host \
+			--disk path=${OCPVMDISKDIR}/worker-1.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=10,bus=virtio,format=qcow2 \
+			--install kernel=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-kernel-x86_64,initrd=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=http://192.168.140.1:8080/$OCPINSTALLVERSION/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=http://192.168.140.1:8080/worker.ign ip=dhcp rd.neednet=1" \
+			--os-type=linux \
+			--os-variant=rhel8-unknown \
+			--graphics vnc \
+			--network network=${NETWORKNAME},mac=${WORKER1MAC} \
+			--noautoconsole --wait -1 \
+			--name worker-1.${CLUSTERNAME}.${OCPDOMAIN} 
+	
+	}
+}     
+
+
+install-stage-startocpbootstrap() {
+
+	if [ -e .bootstrap-stage ]
+	then 
+		BOOTSTRAPSTAGESTRING="Start OCP Cluster Bootstrap"
+	else
+		BOOTSTRAPSTAGESTRING="Continue OCP Cluster Bootstrap"
+		touch .bootstrap-stage	
+	fi
+
+	query-to-proceeed "$BOOTSTRAPSTAGESTRING" $YES && {
+
+		echo You can observe the output of the bootstrap node at this stage by issuing:
+		echo ssh -i $OCPSSHKEY core@bootstrap.${CLUSTERNAME}.${OCPDOMAIN} "sudo journalctl -b -f -u bootkube.service"
+		echo 
+
+		while [ 1 ]
+		do
+			$OCPINSTALLSOURCE/openshift-install --dir=$CLUSTERSETUPDIR wait-for bootstrap-complete
+
+			if [ $? -eq 0 ]
+			then
+				#the wait-for bootstrap-complete was successful
+				virsh list | grep bootstrap.${CLUSTERNAME}.${OCPDOMAIN} > /dev/null 2>&1
+				if [ $? -eq 0 ]
+				then
+					virsh destroy bootstrap.${CLUSTERNAME}.${OCPDOMAIN}
+   	    		 		virsh undefine --domain bootstrap.${CLUSTERNAME}.${OCPDOMAIN} --remove-all-storage
+				fi
+				break
+			else
+				echo
+				echo "The bootstrap process doesn't appear to have completed successfully. "
+				echo "This process downloads a lot of images from quay.io and can take a long time."
+				echo
+				echo    "Press <ENTER> to re-issue this stage (wait-for bootstrap-complete) and give it some more time, OR... "
+				echo -n "Press <CTRL-C> to abort this install and examine then rerun install and return to this point"
+				read CONTINUE
+				$OCPINSTALLSOURCE/openshift-install --dir=$CLUSTERSETUPDIR wait-for bootstrap-complete
+				echo
+			fi
+		done
+	}
+	rm .bootstrap-stage > /dev/null 2>&1
+}
+
+
+install-stage-approvecsrs() {
+
+	query-to-proceeed "Approve pending/recurring CSRs" $NO && {
+
+		CSRAPPROVALPID=0
+
+		if [ $CSRAPPROVALPID -eq 0 ]
+		then
+			# This runs in the backgound approving certificates as they come...
+			{
+				trap "echo; echo 'CSR Approvals (oc get csr) stopped...'; exit" SIGQUIT
+	
+				while [ 1 ] 
+				do
+					${OCPINSTALLSOURCE}/oc get csr | grep Pending | awk '{ print $1 }' | xargs ${OCPINSTALLSOURCE}/oc adm certificate approve > /dev/null 2>&1
+					sleep 10
+				done
+			} &
+			CSRAPPROVALPID=$!
+		fi
+	
+		# monitoring the output through the bootstrap requires not deleting it...
+		trap 'kill -s SIGQUIT $CSRAPPROVALPID ; sleep 2; echo "Shutting down, please wait..."; sleep 20; exit' SIGINT
+	
+		# shotgun approach and approve everything. So what?
+		#oc get csr -o name | xargs oc adm certificate approve
+	
+		# this is Nathan's
+		# oc get csr -ojson | jq -r '.items[] | select(.status == {} ) | .metadata.name' | xargs oc adm certificate approve
+	}
+}	
+
+
+install-stage-reduceprometheusmemory() {
+
+	query-to-proceeed "Reduce Prometheus pod memory allocation" $NO && {
+
+		PROMETHEUSPID=0
+
+		if [ $PROMETHEUSPID -eq 0 ]
+		then
+			{ 
+				echo "prometheusK8s:" 
+				echo "  resources:" 
+				echo "    requests:"
+   	   			echo "      memory: 256M"
+			} > $CLUSTERSETUPDIR/prometheus-config.yaml
+	
+			${OCPINSTALLSOURCE}/oc create configmap cluster-monitoring-config --from-file=config.yaml=${CLUSTERSETUPDIR}/prometheus-config.yaml -n openshift-monitoring
+		
+			{
+				trap "echo; echo 'Prometheus pods not deleted for resizing (oc delete pod prometheus-k8s-* -n openshift-monitoring)'; exit" SIGQUIT
+				sleep 30 #This is what the recipe suggested...
+	
+				while [ 1 ] 
+				do
+					${OCPINSTALLSOURCE}/oc get pods -n openshift-monitoring 2>/dev/null | grep "prometheus-k8s" > /dev/null 2>&1
+					[ $? -eq 0 ] && break
+					sleep 15
+				done
+	
+				sleep 10
+				echo
+				echo "Deleting Prometheus pods for memory reconfiguration"
+				${OCPINSTALLSOURCE}/oc delete pod prometheus-k8s-0 -n openshift-monitoring
+				${OCPINSTALLSOURCE}/oc delete pod prometheus-k8s-1 -n openshift-monitoring
+	
+			} &
+			PROMETHEUSPID=$!
+		fi
+	
+		# monitoring the output through the bootstrap requires not deleting it...
+		trap 'kill -s SIGQUIT $PROMETHEUSPID; sleep 2; echo "Shutting down prometheus memory reduction (NOT DONE), please wait..."; sleep 20; exit' SIGINT
+	
+	}
+}	
+
+
+install-stage-waitforocpinstalltocomplete() {
+
+	query-to-proceeed "Wait for OCP install to complete" $YES && {
+
+		echo Some useful commands while waiting:
+		echo "- tail -f $CLUSTERSETUPDIR/.openshift_install.log"
+		echo "- oc get co  (To check how operators are progressing...)"
+		echo "- oc get nodes  (always good to see if your cluster has all the nodes it should...)"
+		echo "- oc adm top nodes (to see how your nodes are performing based on their CPU/RAM constraints..."
+		echo "- source ocp-setup-env  (for command line access to oc as setup)"
+		echo
+	
+		$OCPINSTALLSOURCE/openshift-install --dir=$CLUSTERSETUPDIR wait-for install-complete 
+		OCPINSTALLCODE=$?
+		echo OCPINSTALLCODE=$OCPINSTALLCODE >> CLUSTERCONFIG
+		
+		# Stop background "assistants"
+		kill -s SIGQUIT $CSRAPPROVALPID $PROMETHEUSPID >  /dev/null 2>&1
+		sleep 15
+	
+		echo
+		echo _______________________________________________________________________________________
+		echo
+		print-in-green  FINISHED OCP INSTALLATION - `date`
+	
+		if [ $OCPINSTALLCODE -ne 0 ]
+		then
+			echo 
+			echo The OCP Installer exited with code [ $OCPINSTALLCODE ]
+			echo Cluster has `${OCPINSTALLSOURCE}/oc get nodes | egrep "worker|master" | wc -l` nodes and `${OCPINSTALLSOURCE}/oc get co | awk '{ print $3 }' | grep True | wc -l` operators up 
+		fi
+		
+		check-cluster-state 1
+	
+	}
+	
+}
+
+
+
+#############    If this were a different programming language, you would call this a "main()"....
+
+clear
+echo
+print-in-green _______________________________________________________________________________________
+echo
+print-in-green ' YAKKO: Yet Another KVM Konfigurator for Openshift'
+print-in-green _______________________________________________________________________________________
+echo
+
+if [ `whoami` != 'root' ]
+then 
+	echo MUST BE ROOT TO RUN SETUP-OCP
+	exit
+fi
+
+cd ${OCPSETUPDIR} # Just jump to the place of action from hereon
+if [ $? -eq 1 ]
+then 
+	mkdir ${OCPSETUPDIR}
+	cp $0 ${OCPSETUPDIR}
+	echo This script needs to run from ${OCPSETUPDIR}. This directory has been created and a copy has been put there.
+	echo Change to ${OCPSETUPDIR} and rerun.
+	exit
+fi
+
+# This is the directory that the web server will run from
+[ ! -d $IMAGEREPO ] && mkdir -p $IMAGEREPO > /dev/null 2>&1
+
+# A cluster config file exists, so there has been some work done already
+if [ -r CLUSTERCONFIG ]
+then
+	source CLUSTERCONFIG # Load config variables that this script accumulates
+	AUTOSETUP=0
+	CLUSTERSETUPDIR=${OCPSETUPDIR}/install-${CLUSTERNAME}
+	NETWORKNAME=net-${CLUSTERNAME}
+	mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
+
+	if [ $# -gt 0 ] # parameters go here: OPTIONS are: delete / startup / shutdown / (backup: for developers)
+	then
+		if [ $1 == "delete" ]
+		then
+			if  [ "$2" == "${CLUSTERNAME}" ]
+			then
+				delete-deployment
+			else
+				echo "ALERT: To delete cluster [${CLUSTERNAME}], you also need to pass the clustername" 
+				echo "RUN:   $0 delete ${CLUSTERNAME}"
+				echo
+			fi
+			exit
+		fi
+
+		if [ $1 == "startup" ]
+		then
+			for nodename in ${NODELIST}
+			do
+        			echo "Starting up: ${nodename}"
+        			virsh start ${nodename}.${CLUSTERNAME}.${OCPDOMAIN}
+			done
+			
+			exit
+		fi
+
+		if [ $1 == "shutdown" ]
+		then
+			for nodename in ${NODELIST}
+			do
+        			echo "Shutting down: ${nodename}"
+				ssh -i ~/.ssh/id_rsa_ocp  -o "StrictHostKeyChecking no" core@${nodename}.${CLUSTERNAME}.${OCPDOMAIN} sudo shutdown -h 1
+			done
+
+			exit
+		fi
+
+		# A bit strange that you have to have a CLUSTERCONFIG to backup your code ;)
+		# but I'd rather put all parameters together
+		if [ "$1" == "backup" ]
+		then
+			cp $0 /$0.`date +%Y%m%d.%H%M`
+			cp $0 /mnt/YAKKO/$0.`date +%Y%m%d.%H%M`
+			echo Backed it up as /mnt/YAKKO/$0.`date +%Y%m%d.%H%M` ' ;)'
+			echo 
+			exit
+		fi
+
+	fi
+
+	if [ ! -z "$OCPINSTALLCODE" ]
+	then	
+		#if there was an install code registered in CLUSTERCONFIG file then the installer did all it could.
+		check-cluster-state 1
+		exit
+	fi
+
+	if [ -e .bootstrap-stage ]
+	then
+		echo 'The deployment of the cluster (${CLUSTERNAME}) appears to be in the bootstrap stage.'
+		echo "You should skip to this stage - automatic configuration from hereon is not possible."
+		AUTOSETUP=0
+	fi
+
+	query-to-proceeed "Continue configuring cluster ${CLUSTERNAME}" || {
+		echo "Not continuing. To delete this cluster, issue:  $0 delete ${CLUSTERNAME}"
+		echo 
+		exit
+	}
+
+	echo "Continuing with the configuration of ${CLUSTERNAME}"
+else
+	
+	if [ ! -z "$1" ]
+	then
+		echo "There is no cluster defined. First, install a cluster!"
+		echo
+		exit
+	fi
+
+	echo
+
+	while [ 1 ]
+	do
+		echo -n  'Enter base name for the OCP cluster (cluster name will be "ocp4-<base name>"): '
+		read CLUSTERNAME
+
+		if [[ "$CLUSTERNAME" =~ ^[[:alnum:]]+$ ]]
+		then
+			break
+		else
+			echo "Invalid cluster name. Please use characters and numbers only."
+		fi
+	done
+	
+	CLUSTERNAME=ocp4-${CLUSTERNAME}
+	CLUSTERSETUPDIR=${OCPSETUPDIR}/install-${CLUSTERNAME}  
+	NETWORKNAME=net-${CLUSTERNAME}
+	mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
+
+	# Populate the config file
+	echo CLUSTERNAME=${CLUSTERNAME} > CLUSTERCONFIG
+
+	# Once you have completed your first install attempt, the script will write OCPVMDISKDIR as marker of completion of all
+	# required manual stages. Once that file is in place, you are eligible for AUTO
+	if [ -r OCPVMDISKDIR ]
+	then
+		query-to-proceeed "Attempt AUTOMATIC creation of the cluster" && {
+			AUTOSETUP=1
+		}
+	fi
+
+fi
+
+
+##### From hereon, it's "modular"... Well. Logic for further automation is easier to insert.
+
+install-stage-libvirt
+install-stage-pullsecret
+install-stage-sshclient
+install-stage-virtualnetwork
+install-stage-dns
+install-stage-haproxyandloadbalancer
+install-stage-downloadocpbinaries
+install-stage-httpserver
+install-stage-changefirewall
+install-stage-generateocpinstallerconfig
+install-stage-designatevmdirectory
+install-stage-configurebootstraphost
+install-stage-configureocpmasterhosts
+install-stage-configureocpworkerhosts
+install-stage-startocpbootstrap
+install-stage-approvecsrs
+install-stage-reduceprometheusmemory
+install-stage-waitforocpinstalltocomplete
+					
