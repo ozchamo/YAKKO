@@ -34,7 +34,7 @@ What can't it do?
 - Well, I'm working on using a non-virtual network...
 
 Acknowledgements:
-I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
+- I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
 But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it.
 
