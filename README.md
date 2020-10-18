@@ -3,8 +3,8 @@
 Yet another KVM/Konfigurator for OpenShift
 
 Introduction:
-
-If you want to run up OpenShift, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you.
+- If you want to run up OpenShift, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you
+- It will use a Pull Secret from Red Hat which has a lifetime of 60 days, so re-installing is kinda useful...
 
 Requirements:
 - a box with enough RAM 
@@ -33,7 +33,7 @@ What can't it do?
 - I dunno yet. Tons of stuff I presume, but who doesn't want to have OCP in their study?
 - Well, I'm working on using a non-virtual network...
 
-Acknowledgements
+Acknowledgements:
 I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
 But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it.
