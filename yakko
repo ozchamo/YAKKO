@@ -1470,7 +1470,7 @@ fi
 if [ "$1" == "backup" ]
 then
 	# Too lazy to push to git all the time
-	YAKKOBACKUPS="/YAKKO-BACKUP /mnt/YAKKO"
+	YAKKOBACKUPS="/mnt/YAKKO-BACKUPS /mnt/YAKKO-USB"
 	BACKUPNAME=$0.$(date +%Y%m%d.%H%M)
 
 	for YBD in ${YAKKOBACKUPS}
@@ -1519,11 +1519,10 @@ then
 
 	if [ $# -gt 0 ] # parameters go here when there is a cluster: OPTIONS are: delete / startup / shutdown / connect / (backup: for developers)
 	then
-		RUNNINGPARAMETERS=""
+		YAKKOOPERATIONALOPTIONS="startup shutdown connect delete"
 
 		if [ $1 == "startup" ]
 		then
-			RUNNINGPARAMETERS="$RUNNINGPARAMETERS startup"
 			if [ ! -z "$2" ]
 			then
 				# Surely the user knows what he's doing...
@@ -1542,7 +1541,6 @@ then
 
                 if [ $1 == "shutdown" ]
                 then
-                        RUNNINGPARAMETERS="$RUNNINGPARAMETERS shutdown"
                         if [ ! -z "$2" ]
                         then
                                 # Surely the user knows what he's doing...
@@ -1565,7 +1563,6 @@ then
 
 		if [ "$1" == "connect" ]
 		then
-			RUNNINGPARAMETERS="$RUNNINGPARAMETERS connect"
 			if [ ! -z "$2" ]
 			then
 				# Surely the user knows what he's doing...
@@ -1585,7 +1582,6 @@ then
 
 		if [ $1 == "delete" ]
 		then
-			RUNNINGPARAMETERS="$RUNNINGPARAMETERS delete"
 			if  [ "$2" == "${CLUSTERNAME}" ]
 			then
 				delete-deployment
@@ -1610,7 +1606,8 @@ then
 	then	
 		#if there was an install code registered in ${CLUSTERCONFIGFILE} file then the installer did all it could.
 		check-cluster-state 1
-		echo "You can also use the following parameters: $RUNNINGPARAMETERS"
+		echo "You can also use the following parameters: $YAKKOOPERATIONALOPTIONS"
+		echo
 		exit
 	fi
 
