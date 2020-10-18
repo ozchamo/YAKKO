@@ -12,7 +12,7 @@ Requirements:
 - RHEL8 or FEDORA 31 (well, latest is what I have used) - project cockpit is a good (hungry) friend. 
 - access to the ol' internet of course
 
-How to use it?
+How do I use this?
 - download "yakko" and run it
 - the script will copy itself to /OCP-SETUP
 - run it from there as root 
@@ -30,6 +30,7 @@ What can it do?
 
 What can't it do?
 - I dunno yet. Tons of stuff I presume, but who doesn't want to have OCP in their study?
+- Well, I'm working on using a non-virtual network...
 
 Acknowledgements
 I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
