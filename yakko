@@ -36,10 +36,9 @@ WORKER1MAC=52:54:00:1d:1b:8a
 		
 # A few final parameters
 AUTOSETUP=0 # 1 is Auto, 0 is manual
-OCPSETUPDIR=/OCP-SETUP
+YAKKOSETUPDIR=/YAKKO
 OCPSSHKEY=~/.ssh/id_rsa_ocp
-IMAGEREPO=${OCPSETUPDIR}/images # The webserver will serve from here. oc and openshift-install are here already
-DEVBACKUPDIR=/mnt/YAKKO-BACKUP
+IMAGEREPO=${YAKKOSETUPDIR}/images # The webserver will serve from here. oc and openshift-install are here already
 WEBSERVERIP=${BASENETWORK}.1
 WEBSERVERPORT=8080
 WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}
@@ -47,6 +46,7 @@ CLUSTERCONFIGFILE=.clusterconfig # Filename where all defaults for the cluster y
 YAKKODEFAULTS=.yakkodefaults # Filename where all defaults for YAKKO are kept
 YAKKOSTAGE=0
 STAGEPROGRESS=0
+DEVBACKUPS="/mnt/NFS/YAKKO-BACKUPS /mnt/YAKKO-USB"
 OCPWGETTMP=/tmp/ocpsetupwget.tmp
 
 
@@ -324,7 +324,7 @@ delete-deployment-old () {
 
 	echo
 	query-to-proceed "Delete cluster ${CLUSTERNAME} and all associated configuration"  && {
-		CLUSTERSETUPDIR=${OCPSETUPDIR}/install-${CLUSTERNAME}
+		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}
 
 		echo Cleaning up network...
 		virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
@@ -883,7 +883,7 @@ process-stage-downloadocpbinaries() {
 					echo
 				fi
 			
-				cd ${OCPSETUPDIR}
+				cd ${YAKKOSETUPDIR}
 		
 				OCPINSTALLVERSION=$OCPGETCLIENTVERSION
 			#}
@@ -999,7 +999,7 @@ process-stage-generateocpinstallerconfig() {
 
 		query-to-proceed "Generate OCP cluster manifests and ignition files required for cluster bootstrap" && {
 	
-			echo Writing "ocp-setup-env" script for administration. Run \"source ${OCPSETUPDIR}/ocp-setup-env\" to load post-install...
+			echo Writing "ocp-setup-env" script for administration. Run \"source ${YAKKOSETUPDIR}/ocp-setup-env\" to load post-install...
 			{
 				echo "PATH=\$PATH:${OCPINSTALLSOURCE}" 
 				echo export KUBECONFIG=${CLUSTERSETUPDIR}/auth/kubeconfig
@@ -1446,13 +1446,13 @@ then
 	exit
 fi
 
-cd ${OCPSETUPDIR} # Just jump to the place of action from hereon
+cd ${YAKKOSETUPDIR} # Just jump to the place of action from hereon
 if [ $? -eq 1 ]
 then 
-	mkdir ${OCPSETUPDIR}
-	cp $0 ${OCPSETUPDIR}
-	echo This script needs to run from ${OCPSETUPDIR}. This directory has been created and a copy has been put there.
-	echo Change to ${OCPSETUPDIR} and rerun.
+	mkdir ${YAKKOSETUPDIR}
+	cp $0 ${YAKKOSETUPDIR}
+	echo This script needs to run from ${YAKKOSETUPDIR}. This directory has been created and a copy has been put there.
+	echo Change to ${YAKKOSETUPDIR} and rerun.
 	exit
 fi
 
@@ -1470,10 +1470,9 @@ fi
 if [ "$1" == "backup" ]
 then
 	# Too lazy to push to git all the time
-	YAKKOBACKUPS="/mnt/YAKKO-BACKUPS /mnt/YAKKO-USB"
 	BACKUPNAME=$0.$(date +%Y%m%d.%H%M)
 
-	for YBD in ${YAKKOBACKUPS}
+	for YBD in ${DEVBACKUPS}
 	do
 		cp $0 $YBD/${BACKUPNAME}
 		if [ ! -z "$2" ]
@@ -1512,14 +1511,14 @@ then
 	# A cluster config file exists, so there has been some work done already
 	source ${CLUSTERCONFIGFILE} # Load config variables that this script accumulates
 	AUTOSETUP=0
-	CLUSTERSETUPDIR=${OCPSETUPDIR}/install-${CLUSTERNAME}
+	CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}
 	NETWORKNAME=net-${CLUSTERNAME}
 	
 	mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
+	YAKKOOPERATIONALOPTIONS="startup / shutdown / connect / delete"
 
 	if [ $# -gt 0 ] # parameters go here when there is a cluster: OPTIONS are: delete / startup / shutdown / connect / (backup: for developers)
 	then
-		YAKKOOPERATIONALOPTIONS="startup shutdown connect delete"
 
 		if [ $1 == "startup" ]
 		then
@@ -1679,7 +1678,7 @@ else
 	done
 	
 	CLUSTERNAME=ocp4-${CLUSTERNAME}
-	CLUSTERSETUPDIR=${OCPSETUPDIR}/install-${CLUSTERNAME}  
+	CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}  
 	NETWORKNAME=net-${CLUSTERNAME}
 	mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
 
