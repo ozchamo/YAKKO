@@ -14,19 +14,20 @@ Requirements:
 - access to the ol' internet of course
 
 How do I use this?
-- download "yakko" and run it
-- the script will copy itself to /OCP-SETUP
-- run it from there as root 
-- follow instructions, my suggestion is that you run it manually until you get the hang of it
-- once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
+1) Get the bits as user "root":
+    - You can clone the repo (ideally on /) OR  
+    - download "yakko" and run it (https://github.com/ozchamo/YAKKO/raw/master/yakko) 
+2) run "yakko" (again, as root) - the script will copy itself to /YAKKO (if it's not already there based on what you did in step (1)
+3) follow instructions, my suggestion is that you run it manually until you get the hang of it
+4) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
 
 What can it do?
 - it installs OCP (latest if you want) automatically
-- by default, 3 masters + 2 workers
-- using a KVM network behind a NAT - 192.168.140.x
+- by default, 3 masters + 2 workers (configurable by running "yakko defaults")
+- using a KVM network behind a NAT - 192.168.140.x (configurable by running "yakko defaults")
 - leverages the host as load balancer with HAproxy
 - leverages the host as the bastion host, right?
-- delete the entire cluster you've built, and unconfigure all the above
+- delete the entire cluster you've built, and unconfigure all the above (by running yakko delete ocp4-<cluster-basename>)
 - but don't worry - you can build again right? AUTOMATICALLY
 
 What can't it do?
