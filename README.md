@@ -10,8 +10,8 @@ Requirements:
 - a box with enough RAM such that you can build:
     - 3 node clusters in a server with 32GB RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
     - 5 node clusters on 48GB/64GB (3 masters + 2 workers) with plenty RAM to spare
-- RHEL8 or FEDORA 31 (well, latest is what I have used) - project cockpit is a good (hungry) friend
-  (RHEL 8.3 and Fedora 33 have been tested)
+- RHEL 8.2 or FEDORA 32 (RHEL 8.3 and Fedora 33 have been tested)
+- Project cockpit is a good (and hungry) friend
 - access to the ol' internet of course
 
 How do I use this?
@@ -23,7 +23,7 @@ How do I use this?
 4) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
 
 What can it do?
-- it installs OCP (latest if you want) automatically
+- it installs OCP (latest if you want) automatically (4.6, 4.5 and 4.3 all tested)
 - by default, 3 masters + 2 workers (configurable - 3 masters only makes all nodes "schedulable")
 - using a KVM network behind a NAT - 192.168.140.x (configurable by running "yakko defaults")
 - leverages the host as load balancer with HAproxy
