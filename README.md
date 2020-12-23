@@ -1,18 +1,26 @@
 # yakko
 
-Yet another KVM/Konfigurator for OpenShift  (tested with OCP 4.6!)
+Yet Another KVM Konfigurator for OpenShift  (tested with OCP 4.6!)
 
 Introduction:
-- If you want to run up OpenShift, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you
+- If you want to run up an OpenShift cluster, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you
 - It will use a Pull Secret from Red Hat which has a lifetime of 60 days, so re-installing is kinda useful...
+
+Why would you want to run your own (single-box) cluster, isn't that self defeating because there is no real resilience?
+- A full cluster at your disposal lets you test full cluster functionality
+- You can experiment with multiple node setups in an easy self-hosted lab fashion
+- You can create cheap clusters for experimenting with Red Hat Advanced Cluster Manager (RHACM)
+- You can easily setup different versions of OpenShift and examine features and compare behaviour 
+- No public cloud bill... or bill shock! 
+- LEARN LEARN LEARN!
 
 Requirements:
 - a box with enough RAM such that you can build:
     - 3 node clusters in a server with 32GB RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
     - 5 node clusters on 48GB/64GB (3 masters + 2 workers) with plenty RAM to spare
 - RHEL 8.2 or FEDORA 32 (RHEL 8.3 and Fedora 33 have been tested)
-- Project cockpit is a good (and hungry) friend
-- access to the ol' internet of course
+- Project cockpit is a good (though hungry) friend
+- access to the ol' internet
 
 How do I use this?
 1) Get the bits as user "root":
@@ -21,6 +29,7 @@ How do I use this?
 2) run "yakko" (again, as root) - the script will copy itself to /YAKKO (if it's not already there based on what you did in step (1)
 3) follow instructions, my suggestion is that you run it manually until you get the hang of it
 4) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
+5) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
 
 What can it do?
 - it installs OCP (latest if you want) automatically (4.6, 4.5 and 4.3 all tested)
@@ -53,8 +62,8 @@ I could, I chose not to, because I would have to learn another TON of stuff. I a
 I want to cook that too. I have two boxes, Large and medium. My dream is to turn the medium box into a CNV node.
 
 - Hey Daniel, what are the minimum requirements?
-See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)
+See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :) though on this box 
 
 - Hey Daniel, is it AUTOMATIC?
-It seems to be after you master the basics. Who doesn't want to rebuild OCP all the time?
+Yes, after you master the basics. Who doesn't want to rebuild OCP all the time?
 
