@@ -1,7 +1,7 @@
 # yakko
 
 (Y)et (A)nother (K)VM (K)onfigurator for (O)penShift  (tested with OCP 4.6!)
-<BR>
+
 INTRODUCTION:
 If you want to run up an OpenShift cluster, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of manual work. This avoids it!
 
@@ -28,7 +28,7 @@ In a nutshell, what does yakko do?
 - but don't worry - you can build again right? Automatically...
 - What doesn't it do? I dunno yet. Tons of stuff I presume, but who doesn't want to have OCP in their study?
 
-<BR>
+
 REQUIREMENTS:
 - a box with enough RAM such that you can build:
     - 3 node clusters in a server with 32GB RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
@@ -37,14 +37,14 @@ REQUIREMENTS:
 - access to the ol' internet
 - Linux skills - if you are even attempting at using this, you must have some already!
 
-<BR>
+
 TESTED COMBINATIONS:
 - RHEL 8.2, 8.3
 - Fedora 32, 33
 - OpenShift 4.3, 4.5, 4.6 
 (Don't ask for support, but you can ask for help anytime!)
 
-HOW TO - INSTALL or "DAY 1":<BR>
+HOW TO - INSTALL or "DAY 1":
 
 "yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
 1) Get the bits as user "root":
@@ -77,7 +77,7 @@ HOW TO - INSTALL or "DAY 1":<BR>
      To use the OpenShift 'oc' command from hereon, run "source ocp-setup-env" in this shell.
      You can also call yakko with the following parameters: [ startup / shutdown / connect / delete / ops / backup ]
 
-<BR>
+
 HOW TO - OPS or "DAY 2" "ops":<BR>
 Once you have created a cluster, "yakko" is not intended to do much more, after all the idea is to learn and experiment. However, I've automated a few "procedures" that are useful on a day to day basis:
 - yakko connect <node>: let's you jump into a command line of a node (SSH login was automated on install)
@@ -92,18 +92,18 @@ Once you have created a cluster, "yakko" is not intended to do much more, after 
     - localregistry (enable a local registry so you can actually use the cluster...)
     - openaccess (enable the cluster to be accessed/used by other machines in your network (via changing HA proxy)
 
-<BR>
-ACKNOWLEDGEMENTS: 
+
+ACKNOWLEDGEMENTS:
 - I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
 But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it.
 - I needed a COVID confinement project. This was it!
 
-<BR>
+
 COMMITMENT:
 I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 
-<BR>
+
 QUESTIONS YOU MAY HAVE, FOR FUN:
 - Hey Daniel, why didn't you use Ansible? 
 I could, I chose not to, because I would have to learn another TON of stuff. I actually pulled out a couple of lines where I did use it. I may some other day. I wanted this to be ONE script with no additional downloads for code, no dependencies of other scripts.
