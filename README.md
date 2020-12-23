@@ -3,6 +3,7 @@
 (Y)et (A)nother (K)VM (K)onfigurator for (O)penShift  (tested with OCP 4.6!)
 
 INTRODUCTION:
+
 If you want to run up an OpenShift cluster, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of manual work. This avoids it!
 
 Why would you want to run your own (single-box) cluster, isn't that self defeating because there is no real resilience?
@@ -45,7 +46,7 @@ TESTED COMBINATIONS:
 (Don't ask for support, but you can ask for help anytime!)
 
 HOW TO - INSTALL or "DAY 1":
-"yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
+0)"yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
 1) Get the bits as user "root":
     - You can clone the repo (ideally on /) OR  
     - download "yakko" and run it (https://github.com/ozchamo/YAKKO/raw/master/yakko) 
@@ -78,6 +79,7 @@ HOW TO - INSTALL or "DAY 1":
 
 
 HOW TO - OPS or "DAY 2" "ops":
+
 Once you have created a cluster, "yakko" is not intended to do much more, after all the idea is to learn and experiment. However, I've automated a few "procedures" that are useful on a day to day basis:
 - yakko connect <node>: let's you jump into a command line of a node (SSH login was automated on install)
 - yakko shutdown [node]: let's you shutdown a node or THE ENTIRE CLUSTER
@@ -100,7 +102,7 @@ But there are a ton of cookbooks out there, they are all different. I didn't wan
 
 
 COMMITMENT:
-I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
+- I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 
 QUESTIONS YOU MAY HAVE, FOR FUN:
 - Hey Daniel, why didn't you use Ansible? 
