@@ -46,16 +46,16 @@ TESTED COMBINATIONS:
 (Don't ask for support, but you can ask for help anytime!)
 
 HOW TO - INSTALL or "DAY 1":
-0)"yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
-1) Get the bits as user "root":
+1)"yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
+2) Get the bits as user "root":
     - You can clone the repo (ideally on /) OR  
     - download "yakko" and run it (https://github.com/ozchamo/YAKKO/raw/master/yakko) 
-2) run "yakko" (again, as root) - the script will copy itself to /YAKKO (if it's not already there based on what you did in step (1)
-3) follow instructions, my suggestion is that you run it manually until you get the hang of it
-4) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
-5) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
-6) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
-7) Once a cluster is operational, yakko on its reports something like this, anytime you run it without parameters:
+3) run "yakko" (again, as root) - the script will copy itself to /YAKKO (if it's not already there based on what you did in step (1)
+4) follow instructions, my suggestion is that you run it manually until you get the hang of it
+5) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
+6) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
+7) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
+8) Once a cluster is operational, yakko on its reports something like this, anytime you run it without parameters:
 
      _______________________________________________________________________________________
 
