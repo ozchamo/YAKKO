@@ -45,7 +45,6 @@ TESTED COMBINATIONS:
 (Don't ask for support, but you can ask for help anytime!)
 
 HOW TO - INSTALL or "DAY 1":
-
 "yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
 1) Get the bits as user "root":
     - You can clone the repo (ideally on /) OR  
@@ -78,7 +77,7 @@ HOW TO - INSTALL or "DAY 1":
      You can also call yakko with the following parameters: [ startup / shutdown / connect / delete / ops / backup ]
 
 
-HOW TO - OPS or "DAY 2" "ops":<BR>
+HOW TO - OPS or "DAY 2" "ops":
 Once you have created a cluster, "yakko" is not intended to do much more, after all the idea is to learn and experiment. However, I've automated a few "procedures" that are useful on a day to day basis:
 - yakko connect <node>: let's you jump into a command line of a node (SSH login was automated on install)
 - yakko shutdown [node]: let's you shutdown a node or THE ENTIRE CLUSTER
@@ -102,7 +101,6 @@ But there are a ton of cookbooks out there, they are all different. I didn't wan
 
 COMMITMENT:
 I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
-
 
 QUESTIONS YOU MAY HAVE, FOR FUN:
 - Hey Daniel, why didn't you use Ansible? 
