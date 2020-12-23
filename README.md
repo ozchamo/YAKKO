@@ -46,7 +46,7 @@ TESTED COMBINATIONS:
 (Don't ask for support, but you can ask for help anytime!)
 
 HOW TO - INSTALL or "DAY 1":
-1)"yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
+1) "yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
 2) Get the bits as user "root":
     - You can clone the repo (ideally on /) OR  
     - download "yakko" and run it (https://github.com/ozchamo/YAKKO/raw/master/yakko) 
