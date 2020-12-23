@@ -76,7 +76,7 @@ HOW TO - INSTALL or "DAY 1":
      To use the OpenShift 'oc' command from hereon, run "source ocp-setup-env" in this shell.
      You can also call yakko with the following parameters: [ startup / shutdown / connect / delete / ops / backup ]
 
-
+<BR>
 HOW TO - OPS or "DAY 2" "ops"
 Once you have created a cluster, "yakko" is not intended to do much more, after all the idea is to learn and experiment. However, I've automated a few "procedures" that are useful on a day to day basis:
 - yakko connect <node>: let's you jump into a command line of a node (SSH login was automated on install)
