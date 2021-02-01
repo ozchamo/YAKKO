@@ -54,6 +54,7 @@ BACKUPDEVICES="/mnt/NFS/YAKKO-BACKUPS /mnt/YAKKO-USB"
 OCPWGETTMP=/tmp/ocpsetupwget.tmp
 OCPVMDISKDIR=/var/lib/libvirt/images
 OCPDOMAIN=localdomain  
+DNSMASQCONFIGFILE=/etc/NetworkManager/dnsmasq.d/dnsmasq-${YAKKONAME}.conf
 YAKKOOPERATIONALOPTIONS=" startup / shutdown / connect / delete / ops / backup "
 
 
@@ -193,6 +194,18 @@ get-node-list() {
 }
 
 
+print-cluster-administrator() {
+	if [ ! -z "${YAKKOADMIN}" ]
+	then
+		echo "Cluster Administrator: ${YAKKOADMIN}"
+		echo "(Password not available for display)"
+	else
+		echo "Cluster Administrator: kubeadmin"
+		echo "Password:   $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)"
+	fi
+}
+
+
 check-cluster-state() {
 	# if $1 ==  1 print state
 	# if $1 ==  0 don't print state
@@ -201,11 +214,22 @@ check-cluster-state() {
 
 	source ${CLUSTERCONFIGFILE}
 
+	virsh list | grep "master-" > /dev/null 2>&1
+	check-for-error-and-exit $? "There seems to be no master nodes running. You may need to start up the cluster"
+
+	MASTERCOUNT=$(virsh list | grep "master-" | wc -l)
+	
+	echo "The cluster has [${MASTERCOUNT}] master nodes running."
+	echo
+
 	# Are we logged into OpenShift first?
 	oc whoami > /dev/null 2>&1
 	[ $? -eq 1 ] && {
+
 		echo "You are not authorised in the OpenShift server. Are you logged in?"
 		echo "(try  oc login -u <administrator>)"
+		echo
+		print-cluster-administrator
 		echo
 		exit
 	}
@@ -276,13 +300,7 @@ check-cluster-state() {
 		echo "Web console:  $(${OCPINSTALLSOURCE}/oc whoami --show-console)"
 		echo "API server:   $(${OCPINSTALLSOURCE}/oc whoami --show-server)"
 		echo
-		if [ ! -z "${YAKKOADMIN}" ]
-		then
-			echo "Cluster Administrator: ${YAKKOADMIN}"
-		else
-			echo "Cluster Administrator: kubeadmin"
-			echo "Password:   $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)"
-		fi
+		print-cluster-administrator
 		echo
 		echo "To use the OpenShift 'oc' command from hereon, run \"source ocp-setup-env\" in this shell."
 		echo "You can also call "${YAKKONAME}" with the following parameters: [$YAKKOOPERATIONALOPTIONS"]
@@ -350,23 +368,26 @@ call-ocp-operations() {
 	# This is just nice stuff to have after the install is done
 	# we're here because the user called "yakko ops"
 
-	HTPASSWDFILE=/tmp/ocp-htpasswd
-
 	[ -z "$2" ] && { 
 		echo "USAGE: ${YAKKONAME} ops <OPTION> [parameters]" 
 		echo
 		echo "Options are:"
-		echo "    - htpasswd admin-username (deploy local password access and a new administrator)"
-		echo "    - useradd username (add a new user to local password DB)"
-		echo "    - userdelete username (delete an existing user from the local password DB)"
-		echo "    - localregistry (enable a local registry so you can actually use the cluster...)"
-		echo "    - openaccess (enable the cluster to be accessed/used by other machines in your network (via changing HA proxy)"
+		echo "    - htpasswd      -> deploy local password access and a new administrator"
+		echo "    - useradd       -> add a new user to local password DB"
+		echo "    - userdelete    -> delete an existing user from the local password DB"
+		echo "    - localregistry -> enable a local registry so you can actually use the cluster"
+		echo "    - openaccess    -> enable OpenShift access by other clients in your network"
 		echo
 		exit
 	}
 
+	HTPASSWDFILE=/tmp/ocp-htpasswd
+
 	if [ $2 == "htpasswd" ]
 	then
+		echo
+		echo ">>> ENABLE LOCAL PASSWORDS IN OPENSHIFT <<<"
+		echo
 
 		# Need htpasswd from httpd-tools
 		install-package-if-missing httpd-tools 
@@ -374,7 +395,7 @@ call-ocp-operations() {
 		if [ -z "${YAKKOHTPASSWD}" ]
 		then
 			! [ -z "$3" ] 
-			check-for-error-and-exit $? "Incomplete: you need to also pass an ADMIN-USERNAME for an admin account to add." 
+			check-for-error-and-exit $? "you need to also pass an ADMIN-USERNAME for an admin account to add." 
 			NEWUSER="$3"
 
 			{
@@ -435,6 +456,9 @@ call-ocp-operations() {
 
 	elif [ $2 == "useradd" ]
 	then
+		echo
+		echo ">>> ADD A LOCAL USER TO OPENSHIFT <<<"
+		echo
 		[ "${YAKKOHTPASSWD}" -eq 1 ] 
 		check-for-error-and-exit $? "You need to first configure Local Passwords via \"YAKKONAME enable htpasswd\"" 
 
@@ -464,16 +488,20 @@ call-ocp-operations() {
 		check-for-error-and-exit $? "Could not assign self-provisioner role to $3" 
 
 		echo
-		echo "Done - added user $3 and assigned self-provisioner role. You may have to wait a little before you can log in."
+		echo "Success: added user $3 and assigned self-provisioner role."
+		echo "It may take a few moments before you can login."
 		echo
 
 	elif [ "$2" == "userdelete" ]
 	then
+		echo
+		echo ">>> DELETE AN EXISTING LOCAL USER FROM OPENSHIFT <<<"
+		echo
 		[ "${YAKKOHTPASSWD}" -eq 1 ]
                 check-for-error-and-exit $? "You need to first configure Local Passwords via \"YAKKONAME enable htpasswd\""
 
                 ! [ -z "$3" ]
-                check-for-error-and-exit $? "Incomplete: you need to also pass a USERNAME for the username to delete"
+                check-for-error-and-exit $? "you need to also pass a USERNAME for the username to delete"
 
 		DELUSER=$3
 		oc get secret htpass-secret -n openshift-config -o jsonpath={.data.htpasswd} | base64 -d > ${HTPASSWDFILE}
@@ -490,6 +518,10 @@ call-ocp-operations() {
 		
 	elif [ "$2" == "localregistry" ]
 	then
+		echo
+		echo ">>> ENABLE LOCAL REGISTRY IN OPENSHIFT <<<"
+		echo
+
 		query-user "Enabling local registry (images will be lost on registry restart)" "Y" noauto && {
 			oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"storage":{"emptyDir":{}}}}'
 			oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Managed"}}'
@@ -497,12 +529,33 @@ call-ocp-operations() {
 		
 	elif [ "$2" == "openaccess" ]
 	then
-		echo "Enabling $2 will permit access to your cluster from any network in your environment."
-		echo "This is achieved by opening the haproxy configuration in /etc/haproxy/haproxy.cfg"
-		echo "OCP requires in particular access to ports 80 and 443, so if these are in use, think first!"
+		HOSTIP=$(hostname -i)
+
+		echo
+		echo ">>> ENABLE OPEN ACCESS TO OPENSHIFT <<<"
 		echo
 
-		query-user "Enable open access to your OCP cluster" "Y" noauto
+		echo "Enabling \"$2\" will permit access to your cluster from clients in your environment."
+		echo "This is achieved by opening the haproxy configuration in /etc/haproxy/haproxy.cfg and"
+		echo "by enabling wildcard DNS in your network configuration to provide access to the many"
+		echo "sub-domains that OpenShift/Kubernetes creates for projects."
+		echo 
+		echo "HOW \"openaccess\" WORKS ON YOUR LAN:"
+		echo "    - HAproxy access will be opened such that it listens on any network, which uses"
+		echo "      ports 80 and 443. You need to verify that these are not in use on this host."  
+		echo "    - Leverages a DNS wildcard lookup facility served from this host if needed."
+		echo "      For home/lab purposes, DNSMASQ is a great tool with this capability. "
+		echo "      YAKKO can deploy a DNS workaround on this server."
+		echo "    - If you choose to use your own DNSmasq service, add the following lines"
+		echo "      to your dnsmasq.conf to achieve the required functionality (replace the"
+		echo "      address if incorrect for this server):"
+		echo
+		echo "          address=/apps.${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
+		echo "          address=/api.${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
+		echo
+
+
+		query-user "Enable open access to your OCP cluster via HAproxy" "Y" noauto
 		if [ $? -eq 0 ] 
 		then
 			echo "Backing up /etc/haproxy/haproxy.cfg"
@@ -516,10 +569,57 @@ call-ocp-operations() {
 			echo Restarting HAPROXY...
 			systemctl restart haproxy
                         check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
+			echo
+		else
+			echo
+			echo "No changes were made. You can only access OpenShift from this server."
+			echo
+			exit
+		fi
 
-			echo
-			echo "NOTE: You will need to add \"apps.${CLUSTERNAME}.${OCPDOMAIN}\" to your DNS pointing to [${HOSTNAME}]"
-			echo
+		systemctl status dnsmasq >/dev/null 2>&1
+		if [ $? -eq 0 ] 
+		then 
+			echo "It appears that you are using DNSmasq in your system, so YAKKO will not attempt"
+			echo "to configure your setup. You may want to use the instructions above."
+		else
+			query-user "Enable DNSmasq services for OCP access on this server" "N" noauto
+			if [ $? -eq 0 ] 
+			then
+				query-user "Use [$HOSTIP] as the LAN addres for this server" "Y" noauto
+				[ $? -ne 0 ] && {
+					echo -n "Enter the IP address for this host on your LAN: "
+					read HOSTIP
+				}
+				
+				echo
+				echo "Updating dnsmasq.conf at ${DNSMASQCONFIGFILE}"
+				sleep 1
+				# CAN THIS RUN ON THIS SERVER!
+				{
+					echo "listen-address=127.0.0.1,${HOSTIP}"
+					echo "address=/apps.${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
+					echo "address=/api.${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
+					echo "server=/${CLUSTERNAME}.${OCPDOMAIN}/${CLUSTERPROXY}"
+				} > ${DNSMASQCONFIGFILE}
+	
+				echo "Restarting NetworkManager for updated dnsmasq config"
+				systemctl restart NetworkManager
+				sleep 2
+				check-for-error-and-exit $? "Failed to restart [NetworkManager]!!!" 
+	
+				echo
+				echo "Ready. To test, enable [$HOSTIP] as a DNS server in a client and point your"
+				echo "web browser on that client to the cluster console at: "
+				echo
+				echo "    $(${OCPINSTALLSOURCE}/oc whoami --show-console)"
+				echo
+			else
+				echo
+				echo "Local DNSmasq server not modified. If you run your own DNSmasq server"
+				echo "use the above instructions for configuring your dnsmasq.conf."
+				echo
+			fi
 		fi
 	else
 		echo "[$2] is a not a valid command for \"$YAKKONAME ops\""
@@ -743,15 +843,12 @@ process-stage-virtualnetwork() {
 
 process-stage-dns() {
 
-	DNSMASQCONFIGFILE=/etc/NetworkManager/dnsmasq.d/${YAKKONAME}-${CLUSTERNAME}.conf
 
 	[ $1 == "progress" ] && {
 	
         	advance-stage-progression "DNS Configuration" && return
 
 		query-user "Configure DNS for KVM network (dnsmasq/NetworkManager)" "Y" && {
-
-			echo Configuring dnsmask plugin in NETWORKMANAGER
 
 			systemctl status dnsmasq >/dev/null 2>&1
 			if [ $? -eq 0 ]
@@ -771,6 +868,7 @@ process-stage-dns() {
 				query-user "Confirm that DNSMASQ has been configured and restarted" "Y" noauto
 				echo
 			else
+				echo Configuring dnsmask plugin in NETWORKMANAGER
 				# CHANGE TO END USER SYSTEM HERE
 				cat /etc/NetworkManager/NetworkManager.conf | grep "\[main\]" > /dev/null 2>&1
 				[ $? -ne 0 ] && echo '\[main\]' >> /etc/NetworkManager/NetworkManager.conf
@@ -1892,6 +1990,7 @@ cluster-operations() {
 
 			# Sometimes, HA Proxy may not be running...
 			echo "(Re)starting HA Proxy..."
+			echo
 			systemctl restart haproxy
                         check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
 			
