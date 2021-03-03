@@ -68,7 +68,7 @@ HOW TO - INSTALL or "DAY 1":
 
      The console and API server appear to be operational:
 
-     Web console:  https://console-openshift-console.apps.prod.localdomain
+     Web console:  https://console-openshift-console.apps.prod.localdomain 
      API server:   https://api.prod.localdomain:6443
 
      Cluster Administrator: kubeadmin
