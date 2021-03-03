@@ -33,8 +33,8 @@ In a nutshell, what does yakko do?
 - What doesn't it do? I dunno yet. Tons of stuff I presume, but who doesn't want to have OCP in their study?
 
 
-**WHAT YAKKO IS NOT...**
-It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see day 2) you should keep it!
+**WHAT YAKKO IS NOT:**
+It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see "Day 2 Ops)" you should keep it!
 
 
 **REQUIREMENTS**:
