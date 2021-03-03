@@ -1,6 +1,6 @@
 # yakko
 
-(Y)et (A)nother (K)VM (K)onfigurator for (O)penShift  (tested with OCP 4.6!)
+(Y)et (A)nother (K)VM (K)onfigurator for (O)penShift  (tested with OCP 4.7!)
 
 INTRODUCTION:
 
