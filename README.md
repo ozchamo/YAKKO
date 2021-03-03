@@ -41,21 +41,21 @@ A PC/server running RHEL8 or Fedora 32/33 with enough RAM such that you can buil
    - 3 node clusters in a server with 32GB+ RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
    - Many node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
     
-**NICE TO HAVES:**
+**NICE TO HAVES:**  
 - Project cockpit is a good (though hungry) friend
 - access to the ol' internet
 - Linux skills - if you are even attempting at using this, you must have some already!
 - Your own DNS server that can handle wildcards (but YAKKO can otherwise assist)
 
 
-**TESTED COMBINATIONS:**
+**TESTED COMBINATIONS:**  
 - RHEL 8.2, 8.3
 - Fedora 32, 33
 - OpenShift 4.3, 4.5, 4.6, 4.7
 (Don't ask for support, but you can ask for help anytime!)
 
 
-**HOW TO - INSTALL or "DAY 1":**
+**HOW TO - INSTALL or "DAY 1":**  
 1) "yakko" will start the install process when there is no cluster defined, so no further parameters are necessary.
 2) Get the bits as user "root":
     - You can clone the repo (ideally on /) OR  
@@ -67,6 +67,7 @@ A PC/server running RHEL8 or Fedora 32/33 with enough RAM such that you can buil
 7) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
 8) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
 
+_______________________________________________________________________________________
 YAKKO: Yet Another KVM Konfigurator for Openshift
 _______________________________________________________________________________________
 
@@ -87,10 +88,10 @@ Password:      ZefST-hvBBY-fR39z-73ghN
 - To use OpenShift's 'oc' command run: "source ocp-setup-env" in this shell.
 - To make infrastructure changes use:  "yakko infra <options>"  
 - To make operational changes use:     "yakko ops <options>" 
+_______________________________________________________________________________________
 
 
-**HOW TO - OPS or "DAY 2" "ops":**
-
+**HOW TO - OPS or "DAY 2" "ops":**  
 Once you have created a cluster, "yakko" is not intended to do much more, after all the idea is to learn and experiment. However, I've automated a few "procedures" that are useful on a day to day basis.
 
 These are called through passing a parameter to YAKKO, either "infra" or "ops".
@@ -121,18 +122,18 @@ OPTION is one of:
     - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!  
 
 
-**ACKNOWLEDGEMENTS:**
+**ACKNOWLEDGEMENTS:**  
 - I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
 But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it.
 - I needed a COVID confinement project. This was it!
 
 
-**COMMITMENT:**
+**COMMITMENT:**  
 - I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 
 
-**QUESTIONS YOU MAY HAVE, FOR FUN:**
+**QUESTIONS YOU MAY HAVE, FOR FUN:**  
 - Why didn't you use Ansible? 
 I could, I chose not to, because I would have had to learn another TON of stuff. I actually pulled out a couple of lines where I did use it. I may some other day. I wanted this to be ONE script with no additional downloads for code, no dependencies of other scripts.
 - What if I have two boxes and I want to spread the load?
@@ -143,7 +144,7 @@ See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun
 Yes, after you master the basics. Who doesn't want to rebuild OCP all the time?
 
 
-**FINAL NOTE: WHAT IS IT MISSING?**
+**FINAL NOTE: WHAT IS IT MISSING?**  
 Short of this being a backlog...
 - BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but I am yet to build a business case
 - Setting up Chrony 
