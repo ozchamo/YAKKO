@@ -2,8 +2,7 @@
 
 (Y)et (A)nother (K)VM (K)onfigurator for (O)penShift  (tested with OCP 4.7!)
 
-**INTRODUCTION**:
-
+**INTRODUCTION**:  
 If you want to run up an OpenShift cluster, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of manual work. This avoids it!
 
 YAKKO was built around the concept of having ONE script/installer/manager that does it all, and no other dependencies. That one script is YAKKO, it's a bit opinionated, but then again, it's not build for producing production ready clusters, so that should suit most people with a passing need or interest in having an OpenShift cluster around.
@@ -37,10 +36,10 @@ In a nutshell, what does yakko do?
 It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see "Day 2 Ops)" you should keep it!
 
 
-**REQUIREMENTS:**
-- a box with enough RAM such that you can build:
-    - 3 node clusters in a server with 32GB+ RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
-    - Many node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
+**REQUIREMENTS:**  
+A PC/server running RHEL8 or Fedora 32/33 with enough RAM such that you can build:
+   - 3 node clusters in a server with 32GB+ RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
+   - Many node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
     
 **NICE TO HAVES:**
 - Project cockpit is a good (though hungry) friend
@@ -98,28 +97,28 @@ These are called through passing a parameter to YAKKO, either "infra" or "ops".
 
 "yakko infra <parameter>" relates to the mundane tasks related to the infrastructure of the cluster:
 
-USAGE: yakko infra <OPTION> [parameters]
-OPTION is one of:
-    - startcluster  -> start up an existing cluster
-    - stopcluster   -> shutdown an existing cluster
-    - addnode       -> grow the cluster compute capacity by adding a new compute/infra node
-    - deletenode    -> remove a running node from the cluster
-    - nodelogs      -> display the logs of a particular node
-    - sshtonode     -> provide terminal access to an individual cluster node
-    - openaccess    -> enable OpenShift access by other clients in your network
-    - deletecluster -> delete entire cluster and all infrastructure
+USAGE: yakko infra <OPTION> [parameters]  
+OPTION is one of:  
+    - startcluster  -> start up an existing cluster  
+    - stopcluster   -> shutdown an existing cluster  
+    - addnode       -> grow the cluster compute capacity by adding a new compute/infra node  
+    - deletenode    -> remove a running node from the cluster  
+    - nodelogs      -> display the logs of a particular node  
+    - sshtonode     -> provide terminal access to an individual cluster node  
+    - openaccess    -> enable OpenShift access by other clients in your network  
+    - deletecluster -> delete entire cluster and all infrastructure  
 
 "yakko ops" relates to the higher level kubernetes/OCP stuff that makes life more easy going:
 
-USAGE: yakko ops <OPTION> [parameters]
-OPTION is one of:
-    - htpasswd      -> deploy local password access and a new administrator
-    - useradd       -> add a new user to local password DB
-    - userdelete    -> delete an existing user from the local password DB
-    - mastersched   -> enable/disable master scheduling
-    - nodelabel     -> Change the label of a node between worker <-> infra
-    - localregistry -> enable a local registry so you can actually use the cluster
-    - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!
+USAGE: yakko ops <OPTION> [parameters]  
+OPTION is one of:  
+    - htpasswd      -> deploy local password access and a new administrator  
+    - useradd       -> add a new user to local password DB  
+    - userdelete    -> delete an existing user from the local password DB  
+    - mastersched   -> enable/disable master scheduling  
+    - nodelabel     -> Change the label of a node between worker <-> infra  
+    - localregistry -> enable a local registry so you can actually use the cluster  
+    - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!  
 
 
 **ACKNOWLEDGEMENTS:**
