@@ -49,17 +49,18 @@ Tested combinations to date:
 - Your own DNS server that can handle wildcards (but YAKKO can otherwise assist)
 
 ## HOW TO - INSTALL or "DAY 1"
+### [[Watch (an earlier vesion of) YAKKO in action building OpenShift]](https://youtu.be/hLsUp7dwxdQ)
 1) Get the 'yakko' script as user "root": 
     - You can clone the repo (ideally on /) OR  
     - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
 2) run "yakko" as root - e.g. `[root@ocphost YAKKO]# ~/Downloads/yakko`
 3) the script will copy itself to /YAKKO - if it's not already there based on what you did in step (1) - and ask you to re-run from there 
-5) 'yakko' will start the install process when there is no cluster defined, so no further parameters are necessary.
-6) follow instructions, my suggestion is that you run it manually until you get the hang of it
-7) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
-8) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
-9) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
-10) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
+4) 'yakko' will start the install process when there is no cluster defined, so no further parameters are necessary.
+5) follow instructions, my suggestion is that you run it manually until you get the hang of it.
+6) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
+7) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
+8) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
+9) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
 
 ```
 _______________________________________________________________________________________
@@ -86,6 +87,7 @@ Password:      ZefST-hvBBY-fR39z-73ghN
 _______________________________________________________________________________________
 
 ```
+
 ## HOW TO - OPS or "DAY 2" "ops"
 Once you have created a cluster, "yakko" is not intended to do much more, after all the idea is to learn and experiment. However, I've automated a few "procedures" that are useful on a day to day basis.
 
