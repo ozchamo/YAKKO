@@ -4,7 +4,7 @@
 ## INTRODUCTION
 If you want to run up an OpenShift cluster, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
 
-YAKKO was built around the concept of having ONE script/installer/manager that does it all, and no other dependencies. That one script is YAKKO, it's a bit opinionated, but then again, it's not built for producing "production ready" clusters, so that should suit most people with a passing need or interest in having an OpenShift cluster around.
+YAKKO was built around the concept of having ONE script/installer/manager that does it all, using the underlying operating system as the installation/operation platform and resource server/service. As a prime example, YAKKO depends on libvirt/KVM and so it will install and configure required packages on your server to build and run OpenShift VMs, just as it may be used as the DNS resource should you not have your own DNS. Because of this, YAKKO is a bit opinionated, but then again, it's not built for creaeting "production ready" clusters, and so it should suit most people with a passing need or interest in having an OpenShift cluster around (or again.
 
 Why would you want to run your own (single-box) cluster, isn't that self defeating because there is no real resilience?
 - A full cluster at your disposal lets you test full cluster functionality
@@ -49,7 +49,7 @@ Tested combinations to date:
 - Your own DNS server that can handle wildcards (but YAKKO can otherwise assist)
 
 ## HOW TO - INSTALL or "DAY 1"
-### [[Watch (an earlier vesion of) YAKKO in action building OpenShift]](https://youtu.be/hLsUp7dwxdQ)
+#### [[Watch (an earlier vesion of) YAKKO in action building OpenShift]](https://youtu.be/hLsUp7dwxdQ)
 1) Get the 'yakko' script as user "root": 
     - You can clone the repo (ideally on /) OR  
     - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
@@ -123,14 +123,19 @@ OPTION is one of:
     - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!  
 ```
 
-## ACKNOWLEDGEMENTS
+## WHAT IS YAKKO MISSING?  (Backlog of sorts?)
+Short of this being a backlog...
+- BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but I am yet to build a business case
+- Setting up Chrony as an "ops" function
+- Adding nodes from other physical machines and moving virtual nodes around (which may well defeat YAKKO's own purpose)
+- Many 'certainty' principles of higher level systems administration, this said, it tries to keep your firewall on, your SELinux running etc etc.
+
+## COMMITMENT and ACKNOWLEDGMENTS
+- I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 - I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
 But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it!
 - I needed a COVID confinement project. This is it!
-
-## COMMITMENT
-- I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 
 ## QUESTIONS YOU MAY HAVE, FOR FUN
 - Why didn't you use Ansible? 
@@ -141,11 +146,13 @@ I want to cook that too. I have two boxes, Large and medium. My dream is to turn
 See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  
 - Is it AUTOMATIC?
 Yes, after you master the basics. Who doesn't want to rebuild OCP all the time?
-
-## FINAL NOTE: WHAT IS IT MISSING?  
-Short of this being a backlog...
-- BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but I am yet to build a business case
-- Setting up Chrony 
-- Adding nodes from other physical machines and moving virtual nodes around (may well defeat YAKKO's own purpose)
 - Lots of stuff I haven't though off, so leave your comments!
+
+## MY OWN EXPERIENCE AND FINAL WORDS
+- YAKKO is a big undertaking. It began as an exercise in curiosity and developed into a fledgling almost-product
+- As I created clusters and then tried things I didn't know how to do, I quicky appreaciated having the ease of rebuilding from scratch. I can see my customers taking the same approach!
+- Kubernetes, with all the ultra-modern design principles of distributed computing and software delivery it promotes, is replacing the face of everything we took for granted in computing: hardware becomes even more commodity (anything goes, including Raspebrry Pies), virtualisation is turned on its head to become a second (or even third) class citizen (CNV), dependencies are a thing of the past, resilience is a given, and immutability and statelessness are here to stay for the good of mankind. Kubernetes is the new Operating System (of the datatacentre) and Containers are Linux. Time to learn again
+- There will always be people, like me, who hold "self-hosted" as a guiding principle to learn from and... Enjoy!
+
+
 
