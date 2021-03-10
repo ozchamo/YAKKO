@@ -130,7 +130,7 @@ Short of this being a backlog...
 - Adding nodes from other physical machines and moving virtual nodes around (which may well defeat YAKKO's own purpose)
 - Many 'certainty' principles of higher level systems administration, this said, it tries to keep your firewall on, your SELinux running etc etc.
 
-## COMMITMENT and ACKNOWLEDGMENTS
+## COMMITMENT and ACKNOWLEDGEMENTS
 - I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 - I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
