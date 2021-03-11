@@ -1,4 +1,5 @@
-# yakko  ::  (Y)et (A)nother (K)VM (K)onfigurator for (O)penShift 
+# YAKKO 
+## (Y)et (A)nother (K)VM (K)onfigurator for (O)penShift 
 
 
 ## INTRODUCTION
