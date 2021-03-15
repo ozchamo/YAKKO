@@ -257,7 +257,8 @@ advance-stage-progression() {
 	then
 		return 0
 	else
-		echo _______________________________________________________________________________________
+		echo
+		print-in-green  _______________________________________________________________________________________
 		echo
 		print-in-green "STAGE ${STAGEPROGRESS}: $1 (Time start: $(date +%H:%M%p))"
 		echo
@@ -337,8 +338,9 @@ print-cluster-administrator() {
 
 check-cluster-state() {
 	# Call: check-cluster-state <0|1> ["api"]
-	# if $1 ==  1 print state AND EXIT
 	# if $1 ==  0 don't print state
+	# if $1 ==  1 print state AND EXIT
+	# if $2 == power just check for the power status of the cluster
 	# if $2 is the string "api" then we don't bail if the API server is up as some calls 
 	# are looking for this to function, for example if I need a worker node for some
 	# operators to come up.
@@ -347,19 +349,29 @@ check-cluster-state() {
 	# check-cluster-state 0
 	# check-cluster-state 0 api
 
+	# Return values are
+	# 0 -> All good
+	# 1 -> API not good
+	# 2 -> Web Console not good
+	# 3 -> API and Web Console not good
+	# 4 -> Cluster is shutdown!
+
 	PRINTSTATE=$1
-	APIQUERY=$2
+	SPECIALQUERY=$2
 
 	# This is only executed at the end of the process or on subsequent calls
 
 	source ${CLUSTERCONFIGFILE}
 
-	virsh list | grep "master-" > /dev/null 2>&1
-	check-for-error-and-exit $? "There seems to be no master nodes running. You may need to start up the cluster"
-
-	echo
-	echo "CLUSTER: ${CLUSTERNAME}.${OCPDOMAIN}  "   
-	echo
+	if [ "${SPECIALQUERY}" == "power"  ]
+	then
+		if [ $(virsh list --all | grep "master-" | grep "running" | wc -l)  -eq 0 ]
+		then
+			return 4 # Special case - the cluster is SHUTDOWN!
+		else
+			return 0 # The cluster is powered up
+		fi
+	fi
 
 	# Are we logged into OpenShift first?
 	oc whoami > /dev/null 2>&1
@@ -396,17 +408,20 @@ check-cluster-state() {
 
 	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=0 # All good
 	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=1 # API not good
-	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=2 # Web Console not goot
+	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=2 # Web Console not good
 	[ $RESULTCONSOLE -ne 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=3 # API and Web Console not good
 		
 	if [ ${PRINTSTATE} -ne 0 ] 
 	then 
 		# we are asked to print state
+		echo
+		echo "CLUSTER: ${CLUSTERNAME}.${OCPDOMAIN}  "   
+		echo
 
 		if [ $OCPACCESSSTATUS -eq 3 ]
 		then 
 
-			virsh list | grep -e "master-" -e "node-" >/dev/null 2>&1
+			virsh list | grep -e "master-" >/dev/null 2>&1
 			if [ $? -ne 0 ]
 			then
 				echo "All nodes of the cluster are currently powered off."
@@ -458,7 +473,7 @@ check-cluster-state() {
 	else
 		# We are not being asked to pring anything
 		# We manipulate the return value if we are just being asked about the API server
-		if [ ${APIQUERY} == "api" -a ${OCPACCESSSTATUS} == 2 ]
+		if [ ${SPECIALQUERY} == "api" -a ${OCPACCESSSTATUS} == 2 ]
 		then
 			OCPACCESSSTATUS=0
 		fi
@@ -555,7 +570,6 @@ build-ocp-node() {
        		         --name ${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}
 		BUILDOCPNODERESULT=$?
 	fi
-	echo
 
 	# We clear any old entries in known hosts so that user sees no nasty security business
 	sed -i "/${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}/d" /root/.ssh/known_hosts > /dev/null 2>&1
@@ -781,6 +795,14 @@ yakko-infra-operations() {
 
 		YAKKOSTAGE=0 # This is to artificially use the progress-stage framework
 		process-stage-configureocpworkernodes progress
+		if [ $? -ne 0 ]
+		then		
+			echo
+			echo "Worker nodes were not built. Exiting..."
+			echo
+			exit
+		fi
+
 		approve-csrs-normal	
 
 		trap "echo;echo \"Node [${NEWNODENAME}]  has not joined the cluster - deleting...\"; delete-kvm-machine ${NEWNODENAME}; exit" SIGINT
@@ -1050,7 +1072,7 @@ yakko-infra-operations() {
 			fi
 		else
 			echo "ALERT: To delete cluster [${CLUSTERNAME}] and all associated ${YAKKONAME} configuration, you also need to pass the clustername" 
-			echo "RUN:   $0 deletecluster ${CLUSTERNAME}"
+			echo "RUN:   $0 infra deletecluster ${CLUSTERNAME}"
 			echo
 		fi
 	fi
@@ -1104,7 +1126,7 @@ yakko-cluster-operations() {
 			then
 				NEWUSER=administrator
 				echo "You must enter a new administrator who will be granted cluster-admin role."
-				echo -n "Enter a new admin username to add to the HTPasswd provider [administrator]:"
+				echo -n "Enter a new admin username to add to the HTPasswd provider [administrator]: "
 				read NEWUSER
 			        [ -z "${NEWUSER}" ] && NEWUSER="administrator"	
 			else
@@ -1153,6 +1175,7 @@ yakko-cluster-operations() {
 			echo
 			echo "Added [$NEWUSER] admin user with cluster-admin role successfuly"
 			echo
+			echo "YAKKOADMIN=${NEWUSER}" >> ${CLUSTERCONFIGFILE}
 
 			query-user "Disable 'kubeadmin' account" Y && {
 				echo "Deleting secret for 'kubeadmin' account" 
@@ -1541,7 +1564,6 @@ process-stage-virtualnetwork() {
 				echo "YAKKO will create all infrastructure in the ${BASENETWORK}/24 subnet with preallocated IP addresses:"
 				echo Bootstrap: ${BOOTSTRAPIP}	
 				echo Masters: ${MASTER0IP} ${MASTER1IP} and ${MASTER2IP}
-				echo Workers: ${WORKER0IP} and ${WORKER1IP} 
 				echo
 		
 				{
@@ -1610,10 +1632,11 @@ process-stage-virtualnetwork() {
 			virsh net-autostart ${NETWORKNAME}
 			check-for-error-and-exit $? "Could not configure virtual network for auto-start"
 		}
-		echo "Re/starting network to ensure it's operational..."
+		echo "Re/starting network to ensure it is operational..."
 		virsh net-destroy ${NETWORKNAME} 2>/dev/null
 		virsh net-start ${NETWORKNAME}
 		check-for-error-and-exit $? "Could not start virtual network"
+		echo "Virtual network is up"
 	}
 
 	[ $1 == "rollback" ] && {
@@ -1905,7 +1928,6 @@ process-stage-downloadocpbinaries() {
 			fi
 		else
 			echo "OCP Version $OCPGETCLIENTVERSION is already downloaded..."
-			echo
 		fi
 	
 		cd ${YAKKOSETUPDIR}
@@ -2200,33 +2222,44 @@ process-stage-configureocpworkernodes() {
 
 	[ $1 == "progress" ] && {
 
-		if [ ${WORKERNODECOUNT} -eq 0 ]
-		then
-			echo "No worker nodes were requested. These can be added later by issuing: "
-			echo
-			echo "yakko addnode"
-		fi
+                advance-stage-progression "KVM Worker Node Configuration"  &&  {
+			if [ ${WORKERNODECOUNT} -eq 0 ]
+			then
+				echo "No worker nodes were requested. These can be added later by issuing: "
+				echo
+				echo "		yakko addnode"
+			fi
 		
-
-                advance-stage-progression "KVM Worker Node Configuration"  && return
+			return
+		}
 
 		NODESTOBUILD=${WORKERNODECOUNT}
 
-		query-user "Configure OCP worker VM node(s)" "Y" && {
-
-			while [ $NODESTOBUILD -ne 0 ]
-			do
-				((NODESTOBUILD--))
-                       		((NODECOUNT++))
-                       	 	sed -i "/NODECOUNT=.*/c\NODECOUNT=${NODECOUNT}" ${CLUSTERCONFIGFILE} 2>/dev/null
-
-                        	NEWNODENAME=node-${NODECOUNT}
-				NEWNODELIST="${NEWNODELIST} ${NEWNODENAME}"
-
-				build-ocp-node ${NEWNODENAME} auto ${WORKERVCPUS} ${WORKERRAMSIZE} ${WORKERDISKSIZE} worker.ign
-				check-for-error-and-exit $? "Could not build VM for node [${NEWNODENAME}]"
-			done
-		}
+		query-user "Configure OCP worker VM node(s)" "Y" 
+		if [ $? -eq 0 ]
+		then
+			if [ $NODESTOBUILD -eq 0 ]
+			then
+				echo "No Worker nodes were requested. Worker nodes can be added later by calling: "
+				echo "      yakko infra addnode"
+			else
+				while [ $NODESTOBUILD -ne 0 ]
+				do
+					((NODESTOBUILD--))
+                       			((NODECOUNT++))
+                       	 		sed -i "/NODECOUNT=.*/c\NODECOUNT=${NODECOUNT}" ${CLUSTERCONFIGFILE} 2>/dev/null
+	
+       		                 	NEWNODENAME=node-${NODECOUNT}
+					NEWNODELIST="${NEWNODELIST} ${NEWNODENAME}"
+	
+					build-ocp-node ${NEWNODENAME} auto ${WORKERVCPUS} ${WORKERRAMSIZE} ${WORKERDISKSIZE} worker.ign
+					check-for-error-and-exit $? "Could not build VM for node [${NEWNODENAME}]"
+				done
+			fi
+			return 0
+		else
+			return 1
+		fi
 	}     
 
 	[ $1 == "rollback" ] && {
@@ -2440,11 +2473,11 @@ process-stage-waitforocpinstalltocomplete() {
 				echo Cluster has $(${OCPINSTALLSOURCE}/oc get nodes | egrep "worker|master" | wc -l) nodes and $(${OCPINSTALLSOURCE}/oc get co | awk '{ print $3 }' | grep True | wc -l) operators up 
 			else
 				echo
-				echo "IMPORTANT:"
-				echo "	- you DO NOT have a registry --> yakko ops localregistry"
-				echo "	- you cannot access the cluster from another computer --> yakko ops openaccess"
-				echo "	- you do not have any users created --> yakko ops htpasswd administrator &  yakko ops useradd <user>"
-				echo _______________________________________________________________________________________
+				print-in-green "IMPORTANT:"
+				print-in-green "	- you DO NOT have a registry -> yakko ops localregistry"
+				print-in-green "	- you cannot access the cluster from another computer -> yakko ops openaccess"
+				print-in-green "	- you have no user DB-> yakko ops htpasswd administrator &  yakko ops useradd <user>"
+				print-in-green _______________________________________________________________________________________
 			fi
 
 			# We write the first time we believe the cluster was up, for reference
@@ -2501,7 +2534,7 @@ process-stage-continue-clusterconfiguration() {
 		else
 			# if we are here it's because user doesn't know what he wants
 			echo
-			echo "Standing by. To delete this ongoing cluster configuration, run \"${YAKKONAME} deletecluster\"."
+			echo "Standing by. To delete this ongoing cluster configuration, run \"${YAKKONAME} infra deletecluster\"."
 			echo
 			exit
 		fi
@@ -2594,9 +2627,8 @@ process-stage-gatherclusterconfiguration() {
 		echo
 		while [ 1 ]
                 do
-			echo "Worker nodes can be built at cluster creation or later"
-			echo "To build a simple cluster with 3x schedulable MASTER nodes, type [0]"
-			echo
+			echo "Worker nodes can be built at cluster creation or later."
+			echo "To build a cluster with 3 schedulable MASTER nodes, type '0'"
 			echo -n "How many worker nodes do you want to configure at cluster build time [0]: "
 			read VALUE
 			if [ ! -z "$VALUE" ]
@@ -2843,6 +2875,10 @@ source ${YAKKODEFAULTS} > /dev/null 2>&1
 # HERE IT ALL BEGINS
 # This is the last code group - a cluster config file exists or it doesn't
 
+# if the user passed a parameter, let's capture it here... it could be "infra" or "ops"
+YAKKOCALLOPTION=$1
+
+
 if [ ! -r ${CLUSTERCONFIGFILE} ]
 then
 	[ ! -z "${YAKKOCALLOPTION}" ] && { echo "No cluster is configured. To begin, just run \"${YAKKONAME}\"." ; echo; exit; }
@@ -2853,35 +2889,29 @@ else
 
 	if [ ! -z "${CLUSTERCOMPLETE}" ] 
 	then
-		# Check if the masters exist and are up before trying anything else
-		MASTERUPCOUNT=$(virsh list --all | grep "master-" | grep "shut off" | wc -l)
-		YAKKOCALLOPTION=$1
-		[ "${YAKKOCALLOPTION}" == infra -a "$2" == startcluster ] && { yakko-infra-operations startcluster; exit; }
-		if [ ${MASTERUPCOUNT} -eq 3 ]
-		then
-			if [ -z "${CALLINGSTARTCLUSTER}" ]
-			then
-				echo "ERROR: Cluster [${CLUSTERNAME}] appears to be shut down."
-				echo 
-				echo "Run 'yakko infra startcluster' to start up!"
-				echo
-				exit
-			fi
-		fi
 
-		# This cluster is OPERATIONAL (not withstanding the state) 
-		oc whoami | grep "[':admin'|${YAKKOADMIN}]"  > /dev/null
-		AMIKUBEADMIN=$?
-		if [ ${AMIKUBEADMIN} != 0 ]
+		# We first check to see if the cluster is powered up - and void hassle
+		check-cluster-state 0 power
+		if [ $? -eq 4 ]
 		then
-			echo "ATTENTION: You must be OpenShift user <system:admin>/<kube:admin> to run ${YAKKONAME}"
+
+			# When the cluster is shutdown, you can start it or DELETE it!
+
+			if [ "${YAKKOCALLOPTION}" == infra -a "$2" == startcluster ]
+			then	
+				yakko-infra-operations startcluster
+			fi
+
+			if [ "${YAKKOCALLOPTION}" == infra -a "$2" == deletecluster ]
+			then
+				yakko-infra-operations deletecluster $3
+			fi
+
 			echo
-			echo "If the kubeadmin user is still available you can login using:"
-			echo
-			echo "   oc login -u kubeadmin -p $(cat install-${CLUSTERNAME}/auth/kubeadmin-password) https://api.${CLUSTERNAME}.${OCPDOMAIN}:6443"
+			echo "The cluster is shutdown. Call 'yakko infra startcluster' to start it up!"
 			echo
 			exit
-		fi
+		fi	
 
 		if [ $# -eq 0 ] # parameters go here when there is a cluster - see above and (backup: for developers)
 		then
@@ -2891,14 +2921,27 @@ else
 
 		if [ $YAKKOCALLOPTION == "infra" ]
 		then
-			shift
+			shift # we get rid of "infra"
 			yakko-infra-operations $* # always exits
 			check-cluster-state 1  # yakko is called on an existing cluster - check it! 1 makes it exit
 		fi
 
+		# This cluster is OPERATIONAL (not withstanding the state) 
+		oc whoami | grep -e ":admin" -e "${YAKKOADMIN}"  > /dev/null
+		AMIKUBEADMIN=$?
+		if [ ${AMIKUBEADMIN} != 0 ]
+		then
+			echo "ATTENTION: You must be an OpenShift administrator to run ${YAKKONAME}"
+			echo
+			echo "If the kubeadmin user is still available you can login using:"
+			echo "   oc login -u kubeadmin -p $(cat install-${CLUSTERNAME}/auth/kubeadmin-password) https://api.${CLUSTERNAME}.${OCPDOMAIN}:6443"
+			echo
+			exit
+		fi
+
 		if [ $YAKKOCALLOPTION == "ops" ]
 		then
-			shift
+			shift # we get rid of "ops"
 			yakko-cluster-operations $* # always exits
 			check-cluster-state 1  # yakko is called on an existing cluster - check it! 1 makes it exit
 		fi
