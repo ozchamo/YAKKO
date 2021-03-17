@@ -2373,7 +2373,7 @@ process-stage-approvecsrs() {
 
 
 process-stage-reduceprometheusmemory() {
-AUTOSETUP=0
+
 	[ $1 == "progress" ] && {
 
                 advance-stage-progression "Prometheus Memory Footprint"  && return
