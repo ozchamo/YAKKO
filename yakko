@@ -52,18 +52,22 @@ AUTOSETUP=0 # 1 is Auto, 0 is manual
 OCPSSHKEY=~/.ssh/id_rsa_ocp
 IMAGEREPO=${YAKKOSETUPDIR}/images # The webserver will serve from here. oc and openshift-install are here already
 CLUSTERCONFIGFILE=.clusterconfig # Filename where all defaults for the cluster you are building are kept
+PULLSECRETFILE=.pullsecret
 YAKKODEFAULTS=.yakkodefaults # Filename where all defaults for YAKKO are kept
 YAKKOSTAGE=0
 STAGEPROGRESS=0
 BACKUPDEVICES="/mnt/NFS/YAKKO-BACKUPS /mnt/YAKKO-USB"
 OCPWGETTMP=/tmp/ocpsetupwget.tmp
 OCPVMDISKDIR=/var/lib/libvirt/images
-OCPDOMAIN=localdomain  
+CLUSTERDOMAIN=localdomain  
 DNSMASQCONFIGFILE=/etc/NetworkManager/dnsmasq.d/dnsmasq-${YAKKONAME}.conf
 
 # Some parameter options
 YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / openaccess / deletecluster "
 YAKKOCLUSTEROPTIONS=" htpasswd / useradd / userdelete / mastersched / nodelabel / localregistry / yakkotest "
+
+# Decorations
+SEPARATIONLINE="__________________________________________________________________________"
 
 
 ################ A FEW INITIALISATION FUNCTIONS ################################################
@@ -73,6 +77,9 @@ populate-clusterconfigfile() {
 	# Populate the config file with some references for future calls
 	{
 		echo "CLUSTERNAME=${CLUSTERNAME}" 
+		echo "CLUSTERFQDN=${CLUSTERFQDN}"
+		echo "CLUSTERWEBURL=${CLUSTERWEBURL}"
+		echo "CLUSTERAPIURL=${CLUSTERAPIURL}"
 		echo "YAKKOSTAGE=0"
 		echo "CLUSTERSETUPDIR=${CLUSTERSETUPDIR}" 
 		echo "NETWORKNAME=${NETWORKNAME}" 
@@ -90,7 +97,7 @@ populate-yakkodefaults() {
 
 	{
 		echo "CLUSTERNAME=${CLUSTERNAME}"
-		echo "OCPDOMAIN=${OCPDOMAIN}"
+		echo "CLUSTERDOMAIN=${CLUSTERDOMAIN}"
 		echo "OCPVMDISKDIR=${OCPVMDISKDIR}"
 		echo "MASTERNODECOUNT=${MASTERNODECOUNT}"
 		echo "WORKERNODECOUNT=${WORKERNODECOUNT}"
@@ -233,8 +240,8 @@ delete-kvm-machine()
 	echo ${NODETODELETE} | grep -E '^node|^master|^bootstrap' > /dev/null 2>&1
 	if [ $? -eq 0 ]
 	then
-		echo ${NODETODELETE} | grep ${CLUSTERNAME}.${OCPDOMAIN} > /dev/null 2>&1
-		[ $? -ne 0 ] && NODETODELETE=${NODETODELETE}.${CLUSTERNAME}.${OCPDOMAIN}
+		echo ${NODETODELETE} | grep ${CLUSTERFQDN} > /dev/null 2>&1
+		[ $? -ne 0 ] && NODETODELETE=${NODETODELETE}.${CLUSTERFQDN}
 		virsh destroy ${NODETODELETE}
 		virsh undefine --domain ${NODETODELETE} --remove-all-storage
 	else
@@ -258,7 +265,7 @@ advance-stage-progression() {
 		return 0
 	else
 		echo
-		print-in-green  _______________________________________________________________________________________
+		print-in-green ${SEPARATIONLINE}
 		echo
 		print-in-green "STAGE ${STAGEPROGRESS}: $1 (Time start: $(date +%H:%M%p))"
 		echo
@@ -327,8 +334,7 @@ pick-a-node() {
 print-cluster-administrator() {
 	if [ ! -z "${YAKKOADMIN}" ]
 	then
-		echo "Administrator: ${YAKKOADMIN}"
-		echo "(Password not available for display)"
+		echo "Administrator: ${YAKKOADMIN}  (Password not available for display)"
 	else
 		echo "Administrator: kubeadmin"
 		echo "Password:      $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)"
@@ -363,9 +369,11 @@ check-cluster-state() {
 
 	source ${CLUSTERCONFIGFILE}
 
+	MASTERUPCOUNT=$(virsh list --all | grep "master-" | grep "running" | wc -l)
+
 	if [ "${SPECIALQUERY}" == "power"  ]
 	then
-		if [ $(virsh list --all | grep "master-" | grep "running" | wc -l)  -eq 0 ]
+		if [ ${MASTERUPCOUNT} -eq 0 ]
 		then
 			return 4 # Special case - the cluster is SHUTDOWN!
 		else
@@ -374,37 +382,27 @@ check-cluster-state() {
 	fi
 
 	# Are we logged into OpenShift first?
-	oc whoami > /dev/null 2>&1
-	[ $? -eq 1 ] && {
-		echo
-
-		echo "You are not authorised in the OpenShift server. Are you logged in?"
-		echo "(try  oc login -u <administrator>)"
-		echo
-		print-cluster-administrator
-		echo
-		exit
-	}
+	#oc whoami > /dev/null 2>&1
+	#[ $? -eq 1 ] && {
+	#	echo
+	#
+	#		echo "You are not authorised in the OpenShift server. Are you logged in?"
+	#		echo "(try  oc login -u <administrator>)"
+	#		echo
+	#		print-cluster-administrator
+	#		echo
+	#		exit
+	#	}
 
 	# If the web console is available, offer info for it regardless of the output above
 	RESULTCONSOLE=1
-	oc whoami --show-console > /dev/null 2>&1
-	if [ $? -eq 0 ]
-	then 
-		wget -O $OCPWGETTMP $(oc whoami --show-console) --no-check-certificate > /dev/null 2>&1
-		RESULTCONSOLE=$?
-	fi
+	wget -O $OCPWGETTMP ${CLUSTERWEBURL} --no-check-certificate > /dev/null 2>&1
+	RESULTCONSOLE=$?
 
 	RESULTSERVER=1
-	oc whoami --show-server > /dev/null 2>&1
-	if [ $? -eq 0 ]
-	then 
-		wget -O $OCPWGETTMP $(oc whoami --show-server) > /dev/null 2>&1
-		RESULTSERVER=$?
-
-		# SSL errors doesn't mean it's not up
-		[ $RESULTSERVER -eq 5 ] && RESULTSERVER=0
-	fi
+	wget -O $OCPWGETTMP ${CLUSTERAPIURL} > /dev/null 2>&1
+	RESULTSERVER=$?
+	[ $RESULTSERVER -eq 5 ] && RESULTSERVER=0 # SSL errors doesn't mean it's not up
 
 	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=0 # All good
 	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -ne 0 ] && OCPACCESSSTATUS=1 # API not good
@@ -414,22 +412,19 @@ check-cluster-state() {
 	if [ ${PRINTSTATE} -ne 0 ] 
 	then 
 		# we are asked to print state
-		echo
-		echo "CLUSTER: ${CLUSTERNAME}.${OCPDOMAIN}  "   
+		echo "CLUSTER: ${CLUSTERFQDN}  "   
 		echo
 
 		if [ $OCPACCESSSTATUS -eq 3 ]
 		then 
-
-			virsh list | grep -e "master-" >/dev/null 2>&1
-			if [ $? -ne 0 ]
+			if [ ${MASTERUPCOUNT} -eq 0 ]
 			then
 				echo "All nodes of the cluster are currently powered off."
 			else
 				echo "ERROR: The cluster does not appear to be accessible or there is no console active yet."
 				echo
 				echo "You can check the status of the masters by issuing, for example: "
-				echo "ssh -i $OCPSSHKEY core@master-0.${CLUSTERNAME}.${OCPDOMAIN}  journalctl -b -f -u crio.service"
+				echo "ssh -i $OCPSSHKEY core@master-0.${CLUSTERFQDN}  journalctl -b -f -u crio.service"
 				echo
 				echo "or simply: $0 sshtonode master-0"
 			fi	
@@ -438,7 +433,7 @@ check-cluster-state() {
 			TOTALMASTERS=$(virsh list | grep "master-" | wc -l)
 			TOTALNODES=$(virsh list | grep "node-" | wc -l)
 			TOTALOPERATORS=$(oc get co | grep -v AVAILABLE | wc -l)
-			ACTIVEOPERATORS=$(oc get co | grep -v AVAILABLE | awk '{print $3}' | wc -l)
+			ACTIVEOPERATORS=$(oc get co | grep -v AVAILABLE | awk '{print $3}' | grep True | wc -l)
 
 			echo "Active Masters:   ${TOTALMASTERS}"
 			echo "Active Nodes:     ${TOTALNODES} (workers/infra)"
@@ -446,20 +441,27 @@ check-cluster-state() {
 			echo "Active Operators: ${ACTIVEOPERATORS}/${TOTALOPERATORS}"
 
 			echo
+			echo "             state      "
 			if [ $OCPACCESSSTATUS -eq 0 ] 
 			then
-				echo "The console and API server appear to be operational:"
+				#echo "The console and API server appear to be operational:"
+				echo "Web Console: [ ✔ ]  ${CLUSTERWEBURL}"
+                                echo "API Server:  [ ✔ ]  ${CLUSTERAPIURL}"
 			elif [ $OCPACCESSSTATUS -eq 1 ]
 			then
-				echo "The console appears to be operational, the API server does not:"
+				#echo "The console appears to be operational, the API server does not:"
+				echo "Web Console: [ ✔ ]  ${CLUSTERWEBURL}"
+                                echo "API Server:  [ ✘ ]" 
 			elif [ $OCPACCESSSTATUS -eq 2 ]
 			then
-				echo "The API server appears to be operational, the console does not:"
+				#echo "The API server appears to be operational, the console does not:"
+				echo "Web Console: [ ✘ ]"
+                                echo "API Server:  [ ✔ ]  ${CLUSTERAPIURL}"
 			fi
 			echo
-			echo "Web console:   $(${OCPINSTALLSOURCE}/oc whoami --show-console)"
-			echo "API server:    $(${OCPINSTALLSOURCE}/oc whoami --show-server)"
-			echo
+			#echo "Web console:   $(${OCPINSTALLSOURCE}/oc whoami --show-console)"
+			#echo "API server:    $(${OCPINSTALLSOURCE}/oc whoami --show-server)"
+			#echo
 			print-cluster-administrator
 			echo
 			echo "- To use OpenShift's 'oc' command run: \"source ocp-setup-env\" in this shell."
@@ -509,9 +511,9 @@ build-ocp-node() {
 		# Update the networking tables for KVM
 		# This function adds a dhcp entry in the virtual network table by inserting 
 		# it in the DHCP scope XML definition and then restarting the network!
- 		# <host mac='${NODEMAC}' name='nodename.${CLUSTERNAME}.${OCPDOMAIN}' ip='${NODEIP}'/>"
+ 		# <host mac='${NODEMAC}' name='nodename.${CLUSTERFQDN}' ip='${NODEIP}'/>"
 
-		HOSTDHCPENTRY="<host mac=\"${NODEMACADDRESS}\" name=\"${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}\" ip=\"${BASENETWORK}.${NETWORKADDRESSSLOT}\"/>"
+		HOSTDHCPENTRY="<host mac=\"${NODEMACADDRESS}\" name=\"${NODEHOSTNAME}.${CLUSTERFQDN}\" ip=\"${BASENETWORK}.${NETWORKADDRESSSLOT}\"/>"
 		sed -i "/<\/dhcp>/i\			${HOSTDHCPENTRY}" ${NETWORKXML}
 
 		# Restart the network
@@ -546,33 +548,33 @@ build-ocp-node() {
 			--memory ${NODERAMSIZE} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host \
-			--disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
+			--disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
 			--install kernel=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-live-kernel-x86_64,initrd=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-live-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.live.rootfs_url=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-live-rootfs.x86_64.img coreos.inst.image_url=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=${WEBSERVERURL}/${IGNITIONFILE} coreos.inst.insecure ip=dhcp rd.neednet=1" \
 			--os-type=linux \
 			--os-variant=rhel8-unknown \
 			--graphics vnc \
 			--network network=${NETWORKNAME},mac=${NODEMACADDRESS}  \
 			--noautoconsole --wait -1 \
-			--name ${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}
+			--name ${NODEHOSTNAME}.${CLUSTERFQDN}
 		BUILDOCPNODERESULT=$?
 	else
       		virt-install \
 	                --memory ${NODERAMSIZE} \
 	       	         --vcpus ${NODEVCPUS} \
        		         --cpu host \
-       		         --disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
+       		         --disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
        		         --install kernel=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-installer-kernel-x86_64,initrd=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-installer-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.inst.image_url=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=${WEBSERVERURL}/${IGNITIONFILE} ip=dhcp rd.neednet=1" \
        		         --os-type=linux \
        		         --os-variant=rhel8-unknown \
        		         --graphics vnc \
        		         --network network=${NETWORKNAME},mac=${NODEMACADDRESS}  \
        		         --noautoconsole --wait -1 \
-       		         --name ${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}
+       		         --name ${NODEHOSTNAME}.${CLUSTERFQDN}
 		BUILDOCPNODERESULT=$?
 	fi
 
 	# We clear any old entries in known hosts so that user sees no nasty security business
-	sed -i "/${NODEHOSTNAME}.${CLUSTERNAME}.${OCPDOMAIN}/d" /root/.ssh/known_hosts > /dev/null 2>&1
+	sed -i "/${NODEHOSTNAME}.${CLUSTERFQDN}/d" /root/.ssh/known_hosts > /dev/null 2>&1
 
 	return $BUILDOCPNODERESULT
 }
@@ -684,7 +686,7 @@ yakko-infra-operations() {
 			# Surely the user knows what he's doing...
 			NODENAME=$2
        	 		echo "Starting up: ${NODENAME}"
-       	 		virsh start ${NODENAME}.${CLUSTERNAME}.${OCPDOMAIN}
+       	 		virsh start ${NODENAME}.${CLUSTERFQDN}
 		else
 			get-node-list all
 			for NODENAME in ${NODELIST}
@@ -980,7 +982,7 @@ yakko-infra-operations() {
 		echo "        to this host's OCP entrypoint. If you already use DNSmasq, just add this line "
 		echo "        to your DNSmasq configuration (be sure to replace the IP address if not correct):"
 		echo
-		echo "             address=/${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
+		echo "             address=/${CLUSTERFQDN}/${HOSTIP}"
 		echo
 
 		query-user "Enable open access to your OCP cluster via HAproxy" "Y" noauto
@@ -1027,9 +1029,9 @@ yakko-infra-operations() {
 				# CAN THIS RUN ON THIS SERVER!
 				{
 					echo "listen-address=127.0.0.1,${HOSTIP}"
-					echo "address=/apps.${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
-					echo "address=/api.${CLUSTERNAME}.${OCPDOMAIN}/${HOSTIP}"
-					echo "server=/${CLUSTERNAME}.${OCPDOMAIN}/${CLUSTERPROXY}"
+					echo "address=/apps.${CLUSTERFQDN}/${HOSTIP}"
+					echo "address=/api.${CLUSTERFQDN}/${HOSTIP}"
+					echo "server=/${CLUSTERFQDN}/${CLUSTERPROXY}"
 				} > ${DNSMASQCONFIGFILE}
 	
 				echo "Restarting NetworkManager for updated dnsmasq config"
@@ -1421,8 +1423,8 @@ yakko-cluster-operations() {
 
 		oc new-project yakkotest
 		oc new-app httpd:latest~https://github.com/ozchamo/yakko-test.git --name=yakko
-		oc expose service yakko --hostname=yakkotest.apps.${CLUSTERNAME}.${OCPDOMAIN}
-		echo _________________________________________________________________________
+		oc expose service yakko --hostname=yakkotest.apps.${CLUSTERFQDN}
+		echo ${SEPARATIONLINE}
 		echo
 		echo
 		echo "OpenShift will begin building the project"
@@ -1487,15 +1489,18 @@ process-stage-pullsecret() {
 
 		advance-stage-progression "Load pull secret" && return
 
-		[ -r PULLSECRET ] && PULLSECRET=$(cat PULLSECRET)
+		[ -r ${PULLSECRETFILE} ] && PULLSECRET=$(cat ${PULLSECRETFILE})
+
+		query-user "Add a new pull secret" N
+		WANTPULLSECRET=$?
 
 		# There is no pull secret on file or user wants a new one now
-		if [ -z "${PULLSECRET}" ]
+		if [ -z "${PULLSECRET}" -o ${WANTPULLSECRET} -eq 0 ]
 		then
-			echo "There is no pull secret on file."
+			echo "A new pull secret is required."
 		        echo "Please copy/paste pull secret from [ https://cloud.redhat.com/openshift/install/metal/user-provisioned ]:"
 		        read PULLSECRET
-		        echo $PULLSECRET > PULLSECRET
+		        echo $PULLSECRET > ${PULLSECRETFILE}
 		fi
 	}
 
@@ -1514,7 +1519,7 @@ process-stage-sshclient() {
 
 		query-user "Create new SSH key for node access" "Y"  && {
 			#We clear a potential clash for ssh logins in .known_hosts
-			sed -i "/bootstrap.${CLUSTERNAME}.${OCPDOMAIN}/d" /root/.ssh/known_hosts > /dev/null 2>&1
+			sed -i "/bootstrap.${CLUSTERFQDN}/d" /root/.ssh/known_hosts > /dev/null 2>&1
 			ssh-keygen -t rsa -b 4096 -N '' -f $OCPSSHKEY
 		 	check-for-error-and-exit $?  "Failed to create SSH key"
 			eval "$(ssh-agent -s)"
@@ -1578,9 +1583,9 @@ process-stage-virtualnetwork() {
 		
 					echo "	<bridge name='virbrocp' stp='on' delay='0'/>"
 		
-					echo "	<domain name='${CLUSTERNAME}.${OCPDOMAIN}' localOnly='yes'/>"
+					echo "	<domain name='${CLUSTERFQDN}' localOnly='yes'/>"
 					echo "	<dns>"
-					echo "		<forwarder domain='apps.${CLUSTERNAME}.${OCPDOMAIN}' addr='127.0.0.1'/>"
+					echo "		<forwarder domain='apps.${CLUSTERFQDN}' addr='127.0.0.1'/>"
 					echo "		<host ip='${CLUSTERPROXY}'>"
 					echo "			<hostname>api</hostname>"
 					echo "			<hostname>api-int</hostname>"
@@ -1600,17 +1605,17 @@ process-stage-virtualnetwork() {
 		
 					# SRV Records are not required from OCP 4.4 onwards... But never mind
 		
-					echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERNAME}.${OCPDOMAIN}' target='etcd-0.${CLUSTERNAME}.${OCPDOMAIN}' port='2380' priority='0' weight='10'/>"
-					echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERNAME}.${OCPDOMAIN}' target='etcd-1.${CLUSTERNAME}.${OCPDOMAIN}' port='2380' priority='0' weight='10'/>"
-					echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERNAME}.${OCPDOMAIN}' target='etcd-2.${CLUSTERNAME}.${OCPDOMAIN}' port='2380' priority='0' weight='10'/>"
+					echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERFQDN}' target='etcd-0.${CLUSTERFQDN}' port='2380' priority='0' weight='10'/>"
+					echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERFQDN}' target='etcd-1.${CLUSTERFQDN}' port='2380' priority='0' weight='10'/>"
+					echo " 	 	<srv service='etcd-server-ssl' protocol='tcp' domain='${CLUSTERFQDN}' target='etcd-2.${CLUSTERFQDN}' port='2380' priority='0' weight='10'/>"
 					echo "	</dns>"
 					echo "	<ip address='${CLUSTERPROXY}' netmask='255.255.255.0'>"
 	   	 			echo "		<dhcp>"
 					echo "			<range start='${BASENETWORK}.5' end='${BASENETWORK}.254'/>"
-					echo "			<host mac='${BOOTSTRAPMAC}' name='bootstrap.${CLUSTERNAME}.${OCPDOMAIN}' ip='${BOOTSTRAPIP}'/>"
-					echo " 			<host mac='${MASTER0MAC}' name='master-0.${CLUSTERNAME}.${OCPDOMAIN}' ip='${MASTER0IP}'/>"
-					echo " 			<host mac='${MASTER1MAC}' name='master-1.${CLUSTERNAME}.${OCPDOMAIN}' ip='${MASTER1IP}'/>"
-					echo " 			<host mac='${MASTER2MAC}' name='master-2.${CLUSTERNAME}.${OCPDOMAIN}' ip='${MASTER2IP}'/>"
+					echo "			<host mac='${BOOTSTRAPMAC}' name='bootstrap.${CLUSTERFQDN}' ip='${BOOTSTRAPIP}'/>"
+					echo " 			<host mac='${MASTER0MAC}' name='master-0.${CLUSTERFQDN}' ip='${MASTER0IP}'/>"
+					echo " 			<host mac='${MASTER1MAC}' name='master-1.${CLUSTERFQDN}' ip='${MASTER1IP}'/>"
+					echo " 			<host mac='${MASTER2MAC}' name='master-2.${CLUSTERFQDN}' ip='${MASTER2IP}'/>"
 					echo "		</dhcp>"
 					echo "	</ip>"
 					echo "</network>"
@@ -1669,8 +1674,8 @@ process-stage-dns() {
 				echo "You will need to add these two addresses to your DNSMASQ configuration before continuing"
 				echo "upon which ${YAKKONAME} will test the DNS of your system before continuing"
 				echo
-				echo "	server=/${CLUSTERNAME}.${OCPDOMAIN}/${CLUSTERPROXY}"
-				echo "	address=/apps.${CLUSTERNAME}.${OCPDOMAIN}/${CLUSTERPROXY}"
+				echo "	server=/${CLUSTERFQDN}/${CLUSTERPROXY}"
+				echo "	address=/apps.${CLUSTERFQDN}/${CLUSTERPROXY}"
 				echo
 				query-user "Confirm that DNSMASQ has been configured and restarted" "Y" noauto
 				echo
@@ -1686,8 +1691,8 @@ process-stage-dns() {
 				rm /etc/NetworkManager/dnsmasq.d/${YAKKONAME}* 2>/dev/null #Deleting old entries
 		
 				{
-					echo "server=/${CLUSTERNAME}.${OCPDOMAIN}/${CLUSTERPROXY}"
-					echo "address=/apps.${CLUSTERNAME}.${OCPDOMAIN}/${CLUSTERPROXY}"
+					echo "server=/${CLUSTERFQDN}/${CLUSTERPROXY}"
+					echo "address=/apps.${CLUSTERFQDN}/${CLUSTERPROXY}"
 				} > ${DNSMASQCONFIGFILE}
 		
 				systemctl restart NetworkManager
@@ -1701,13 +1706,13 @@ process-stage-dns() {
 
 					# We need to add after [Resolve]
 					# DNS=127.0.0.1
-					# Domains=~${OCPDOMAIN}
+					# Domains=~${CLUSTERDOMAIN}
 					#to /etc/systemd/resolved.conf
 					echo
 					echo "ATTENTION: This system is using systemd-resolved. YAKKO needs to add a DNS stub in /etc/systemd/resolved.conf"
 
-					cat /etc/systemd/resolved.conf | grep "Domains=~${OCPDOMAIN}" > /dev/null 2>&1
-					[ $? -ne 0 ] && sed -i.${YAKKONAME} "/\[Resolve\]/ a Domains=~${OCPDOMAIN}" /etc/systemd/resolved.conf
+					cat /etc/systemd/resolved.conf | grep "Domains=~${CLUSTERDOMAIN}" > /dev/null 2>&1
+					[ $? -ne 0 ] && sed -i.${YAKKONAME} "/\[Resolve\]/ a Domains=~${CLUSTERDOMAIN}" /etc/systemd/resolved.conf
 
 					cat /etc/systemd/resolved.conf | grep "DNS=127.0.0.1" > /dev/null 2>&1
 					[ $? -ne 0 ] && sed -i.${YAKKONAME} "/\[Resolve\]/ a DNS=127.0.0.1" /etc/systemd/resolved.conf
@@ -1720,20 +1725,20 @@ process-stage-dns() {
 			echo
 			echo "DNS test - from Virtual Network ${BASENETWORK}.0:"
 
-			host api-int.${CLUSTERNAME}.${OCPDOMAIN} ${CLUSTERPROXY} | grep "has address"
-			check-for-error-and-exit $? "Could not resolve api-int.${CLUSTERNAME}.${OCPDOMAIN} on ${BASENETWORK}"
+			host api-int.${CLUSTERFQDN} ${CLUSTERPROXY} | grep "has address"
+			check-for-error-and-exit $? "Could not resolve api-int.${CLUSTERFQDN} on ${BASENETWORK}"
 
-			host etcd-0.${CLUSTERNAME}.${OCPDOMAIN} ${CLUSTERPROXY} | grep "has address"
-			check-for-error-and-exit $? "Could not resolve etcd-0.${CLUSTERNAME}.${OCPDOMAIN} on ${BASENETWORK}"
+			host etcd-0.${CLUSTERFQDN} ${CLUSTERPROXY} | grep "has address"
+			check-for-error-and-exit $? "Could not resolve etcd-0.${CLUSTERFQDN} on ${BASENETWORK}"
 
-			host etcd-1.${CLUSTERNAME}.${OCPDOMAIN} ${CLUSTERPROXY} | grep "has address"
-			check-for-error-and-exit $? "Could not resolve etcd-1.${CLUSTERNAME}.${OCPDOMAIN} on ${BASENETWORK}"
+			host etcd-1.${CLUSTERFQDN} ${CLUSTERPROXY} | grep "has address"
+			check-for-error-and-exit $? "Could not resolve etcd-1.${CLUSTERFQDN} on ${BASENETWORK}"
 
-			host etcd-2.${CLUSTERNAME}.${OCPDOMAIN} ${CLUSTERPROXY} | grep "has address"
-			check-for-error-and-exit $? "Could not resolve etcd-2.${CLUSTERNAME}.${OCPDOMAIN} on ${BASENETWORK}"
+			host etcd-2.${CLUSTERFQDN} ${CLUSTERPROXY} | grep "has address"
+			check-for-error-and-exit $? "Could not resolve etcd-2.${CLUSTERFQDN} on ${BASENETWORK}"
 
-			host -t srv _etcd-server-ssl._tcp.${CLUSTERNAME}.${OCPDOMAIN} ${CLUSTERPROXY}
-			check-for-error-and-exit $? "Could not resolve etcd-server-ssl.${CLUSTERNAME}.${OCPDOMAIN} on ${BASENETWORK}"
+			host -t srv _etcd-server-ssl._tcp.${CLUSTERFQDN} ${CLUSTERPROXY}
+			check-for-error-and-exit $? "Could not resolve etcd-server-ssl.${CLUSTERFQDN} on ${BASENETWORK}"
 				
 			echo
 			echo "DNS test - from the host:"
@@ -1742,22 +1747,22 @@ process-stage-dns() {
 			# Then came systemd.resolved.conf and things needed to be "updated"
 			# So now, we need to add to /etc/systemd/resolvd.conf the following
 			#	DNS=127.0.0.1
-			#	Domains=~${OCPDOMAIN}
+			#	Domains=~${CLUSTERDOMAIN}
 			# and... still trying to fix it
  
-			host api.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1 | grep "has address"
+			host api.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve api-int on 127.0.0.1"
 
-			host etcd-0.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1 | grep "has address"
+			host etcd-0.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve etcd-0 on 127.0.0.1"
 
-			host etcd-1.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1 | grep "has address"
+			host etcd-1.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve etcd-1 on 127.0.0.1"
 
-			host etcd-2.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1 | grep "has address"
+			host etcd-2.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve etcd-2 on 127.0.0.1"
 
-			host testing.apps.${CLUSTERNAME}.${OCPDOMAIN} 127.0.0.1
+			host testing.apps.${CLUSTERFQDN} 127.0.0.1
 			check-for-error-and-exit $? "Could not resolve testing.apps on 127.0.0.1"
 		}
 	}
@@ -2007,13 +2012,13 @@ process-stage-changefirewall() {
 
         	advance-stage-progression "Configure Firewall" && return
 
-		query-user "Change Firewall rules" "Y" && { 
+		firewall-cmd --state >/dev/null 2>&1
+		if [ $? -eq 252 ]
+		then
+			echo "Firewall is not running. Configuration is not required."
+		else
+			query-user "Change Firewall rules" "Y" && { 
 
-			firewall-cmd --state >/dev/null 2>&1
-			if [ $? -eq 252 ]
-			then
-				echo "Firewall is not running. Configuration is not required."
-			else
 				echo "Changing firewall port 80/tcp access"
 				firewall-cmd --add-port=80/tcp
 				firewall-cmd --zone=libvirt --add-port=80/tcp
@@ -2041,8 +2046,8 @@ process-stage-changefirewall() {
 				echo "Changing firewall port 22623/udp access"
 				firewall-cmd --add-port=22623/udp
 				firewall-cmd --zone=libvirt --add-port=22623/udp
-			fi	
 		}
+		fi	
 	}
 
 	[ $1 == "rollback" ] && {
@@ -2077,7 +2082,7 @@ process-stage-generateocpinstallerconfig() {
 	
 			# We load/reload, in case there was an interrupt to the AUTO setup and these values were released
 			SSHPUBKEY=$(cat $OCPSSHKEY.pub)
-			PULLSECRET=$(cat PULLSECRET)
+			PULLSECRET=$(cat ${PULLSECRETFILE})
 
 			# Check if HyperThreading is enabled, just in case
 			CORECOUNT=$(less /proc/cpuinfo | grep cores | uniq | awk '{print $4}')
@@ -2103,7 +2108,7 @@ process-stage-generateocpinstallerconfig() {
 			
 			{
 				echo "apiVersion: v1"
-				echo "baseDomain: ${OCPDOMAIN}"
+				echo "baseDomain: ${CLUSTERDOMAIN}"
 				echo "compute:"
 				echo "- hyperthreading: ${HYPERTHREADING}"
 				echo "  name: worker"
@@ -2222,43 +2227,31 @@ process-stage-configureocpworkernodes() {
 
 	[ $1 == "progress" ] && {
 
-                advance-stage-progression "KVM Worker Node Configuration"  &&  {
-			if [ ${WORKERNODECOUNT} -eq 0 ]
-			then
-				echo "No worker nodes were requested. These can be added later by issuing: "
-				echo
-				echo "		yakko addnode"
-			fi
-		
-			return
-		}
+                advance-stage-progression "KVM Worker Node Configuration"  && return
 
 		NODESTOBUILD=${WORKERNODECOUNT}
 
-		query-user "Configure OCP worker VM node(s)" "Y" 
-		if [ $? -eq 0 ]
+		if [ $NODESTOBUILD -eq 0 ]
 		then
-			if [ $NODESTOBUILD -eq 0 ]
+			echo "No Worker nodes were requested. Worker nodes can be added later by calling: "
+			echo "      yakko infra addnode"
+		else
+			query-user "Configure OCP worker VM node(s)" "Y" 
+			if [ $? -eq 0 ]
 			then
-				echo "No Worker nodes were requested. Worker nodes can be added later by calling: "
-				echo "      yakko infra addnode"
-			else
 				while [ $NODESTOBUILD -ne 0 ]
 				do
 					((NODESTOBUILD--))
-                       			((NODECOUNT++))
-                       	 		sed -i "/NODECOUNT=.*/c\NODECOUNT=${NODECOUNT}" ${CLUSTERCONFIGFILE} 2>/dev/null
-	
-       		                 	NEWNODENAME=node-${NODECOUNT}
+       	                		((NODECOUNT++))
+       	                	 	sed -i "/NODECOUNT=.*/c\NODECOUNT=${NODECOUNT}" ${CLUSTERCONFIGFILE} 2>/dev/null
+		
+       			               	NEWNODENAME=node-${NODECOUNT}
 					NEWNODELIST="${NEWNODELIST} ${NEWNODENAME}"
-	
+		
 					build-ocp-node ${NEWNODENAME} auto ${WORKERVCPUS} ${WORKERRAMSIZE} ${WORKERDISKSIZE} worker.ign
 					check-for-error-and-exit $? "Could not build VM for node [${NEWNODENAME}]"
 				done
 			fi
-			return 0
-		else
-			return 1
 		fi
 	}     
 
@@ -2295,7 +2288,7 @@ process-stage-startocpbootstrap() {
 		query-user "Start/continue OCP Cluster bootstrap" "Y" && {
 	
 			echo You can observe the output of the bootstrap node at this stage by issuing:
-			echo ssh -i $OCPSSHKEY core@bootstrap.${CLUSTERNAME}.${OCPDOMAIN} "sudo journalctl -b -f -u bootkube.service"
+			echo ssh -i $OCPSSHKEY core@bootstrap.${CLUSTERFQDN} "sudo journalctl -b -f -u bootkube.service"
 			echo 
 	
 			while [ 1 ]
@@ -2305,10 +2298,10 @@ process-stage-startocpbootstrap() {
 				if [ $? -eq 0 ]
 				then
 					#the wait-for bootstrap-complete was successful
-					virsh list | grep bootstrap.${CLUSTERNAME}.${OCPDOMAIN} > /dev/null 2>&1
+					virsh list | grep bootstrap.${CLUSTERFQDN} > /dev/null 2>&1
 					if [ $? -eq 0 ]
 					then
-						delete-kvm-machine bootstrap.${CLUSTERNAME}.${OCPDOMAIN}
+						delete-kvm-machine bootstrap.${CLUSTERFQDN}
 
 						# Now we delete the boostrap from the haproxy!!!
 						cat /etc/haproxy/haproxy.cfg | grep -v bootstrap > /etc/haproxy/haproxy.cfg.nobootstrap
@@ -2380,7 +2373,7 @@ process-stage-approvecsrs() {
 
 
 process-stage-reduceprometheusmemory() {
-
+AUTOSETUP=0
 	[ $1 == "progress" ] && {
 
                 advance-stage-progression "Prometheus Memory Footprint"  && return
@@ -2395,9 +2388,10 @@ process-stage-reduceprometheusmemory() {
 					echo "prometheusK8s:" 
 					echo "  resources:" 
 					echo "    requests:"
-   		   			echo "      memory: 256M"
+   		   			echo "      memory: 256Mi"
 				} > $CLUSTERSETUPDIR/prometheus-config.yaml
 		
+				sleep 20 # Seen issues before...
 				${OCPINSTALLSOURCE}/oc create configmap cluster-monitoring-config --from-file=config.yaml=${CLUSTERSETUPDIR}/prometheus-config.yaml -n openshift-monitoring
 			
 				{
@@ -2407,8 +2401,8 @@ process-stage-reduceprometheusmemory() {
 					while [ 1 ] 
 					do
 						${OCPINSTALLSOURCE}/oc get pods -n openshift-monitoring 2>/dev/null | grep "prometheus-k8s" > /dev/null 2>&1
-
 						[ $? -eq 0 ] && break
+
 						sleep 15
 					done
 		
@@ -2460,7 +2454,7 @@ process-stage-waitforocpinstalltocomplete() {
 			sleep 15
 
 			echo
-			echo _______________________________________________________________________________________
+			echo ${SEPARATIONLINE}
 			echo
 			print-in-green  FINISHED OCP INSTALLATION - $(date)
 			print-time-elapsed
@@ -2477,7 +2471,7 @@ process-stage-waitforocpinstalltocomplete() {
 				print-in-green "	- you DO NOT have a registry -> yakko ops localregistry"
 				print-in-green "	- you cannot access the cluster from another computer -> yakko ops openaccess"
 				print-in-green "	- you have no user DB-> yakko ops htpasswd administrator &  yakko ops useradd <user>"
-				print-in-green _______________________________________________________________________________________
+				print-in-green ${SEPARATIONLINE}
 			fi
 
 			# We write the first time we believe the cluster was up, for reference
@@ -2515,30 +2509,21 @@ process-stage-continue-clusterconfiguration() {
 			exit
 		fi
 
-		query-user "You can continue configuring cluster [${CLUSTERNAME}] where you left off" "Y" noauto	
+		echo
+		query-user "Attempt AUTOMATIC configuration of cluster from this point" "Y" noauto
 		if [ $? -eq 0 ]
-		then
-			echo
-			query-user "Attempt AUTOMATIC creation of cluster [${CLUSTERNAME}]" "Y" noauto
-			if [ $? -eq 0 ]
-			then 
-				AUTOSETUP=1
-			else
-				echo
-				query-user "MANUAL CONFIGURATION: Resume where you left off (\"y\") or Start from the begining (\"n\")" "Y" noauto
-				if [ $? -ne 0 ]
-				then
-					YAKKOSTAGE=0
-				fi
-			fi
+		then 
+			AUTOSETUP=1
 		else
-			# if we are here it's because user doesn't know what he wants
 			echo
-			echo "Standing by. To delete this ongoing cluster configuration, run \"${YAKKONAME} infra deletecluster\"."
-			echo
-			exit
+			query-user "MANUAL CONFIGURATION: Resume where you left off (\"y\") or Start from the begining (\"n\")" "Y" noauto
+			if [ $? -ne 0 ]
+			then
+				YAKKOSTAGE=0
+			fi
 		fi
 	}	
+
 	# NOTE: THIS STAGE MUST PRECEDE execute-yakko-stages
 	# 	SEE MAIN AT BOTTOM
 
@@ -2586,7 +2571,7 @@ process-stage-gatherclusterconfiguration() {
 				echo "Invalid cluster name. Please use lower-case characters and numbers only."
 			fi
 		done
-
+	
 		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}
 		mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
 		NETWORKNAME=net-ocp-${CLUSTERNAME}
@@ -2594,9 +2579,13 @@ process-stage-gatherclusterconfiguration() {
 
 		### QUESTION: domain name ## Stored in YAKKO defaults
        		echo
-		echo -n "Enter the DOMAIN name you wish to setup your cluster under (\"${OCPDOMAIN}\"): "
+		echo -n "Enter the DOMAIN name you wish to setup your cluster under (\"${CLUSTERDOMAIN}\"): "
        	 	read RESPONSE
-		[ ! -z "$RESPONSE" ] && OCPDOMAIN=$RESPONSE
+		[ ! -z "$RESPONSE" ] && CLUSTERDOMAIN=$RESPONSE
+
+		CLUSTERFQDN=${CLUSTERNAME}.${CLUSTERDOMAIN}
+		CLUSTERWEBURL="https://console-openshift-console.apps.${CLUSTERFQDN}"
+		CLUSTERAPIURL="https://api.${CLUSTERFQDN}:6443"
 	
        		# GET BASENETWORK
        		echo
@@ -2841,12 +2830,11 @@ then
 	yakko-backup $*
 fi
 
-clear
-echo
-print-in-green _______________________________________________________________________________________
+clear -x
+print-in-green ${SEPARATIONLINE}
 echo
 print-in-green ' YAKKO: Yet Another KVM Konfigurator for Openshift'
-print-in-green _______________________________________________________________________________________
+print-in-green ${SEPARATIONLINE}
 echo
 
 if [ $(whoami) != 'root' ]
@@ -2887,6 +2875,12 @@ then
 else
 	source ${CLUSTERCONFIGFILE} # Load config variables that this script accumulates
 
+	# OK - the user wants to complete back out
+	if [ "${YAKKOCALLOPTION}" == infra -a "$2" == deletecluster ]
+	then
+		yakko-infra-operations deletecluster $3
+	fi
+
 	if [ ! -z "${CLUSTERCOMPLETE}" ] 
 	then
 
@@ -2900,11 +2894,6 @@ else
 			if [ "${YAKKOCALLOPTION}" == infra -a "$2" == startcluster ]
 			then	
 				yakko-infra-operations startcluster
-			fi
-
-			if [ "${YAKKOCALLOPTION}" == infra -a "$2" == deletecluster ]
-			then
-				yakko-infra-operations deletecluster $3
 			fi
 
 			echo
@@ -2934,7 +2923,7 @@ else
 			echo "ATTENTION: You must be an OpenShift administrator to run ${YAKKONAME}"
 			echo
 			echo "If the kubeadmin user is still available you can login using:"
-			echo "   oc login -u kubeadmin -p $(cat install-${CLUSTERNAME}/auth/kubeadmin-password) https://api.${CLUSTERNAME}.${OCPDOMAIN}:6443"
+			echo "   oc login -u kubeadmin -p $(cat install-${CLUSTERNAME}/auth/kubeadmin-password) https://api.${CLUSTERFQDN}:6443"
 			echo
 			exit
 		fi
