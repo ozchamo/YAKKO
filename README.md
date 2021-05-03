@@ -24,17 +24,18 @@ In a nutshell, what does yakko do?
 - leverages the host as the bastion host, right?
 - eases the networking by using a KVM network behind NAT 
 - leverages the host as load balancer with HAproxy
-- rolls back individual failed stages so that you can fix if necessary and then keep going or just "yakko delete" what you've done so far and start afresh. It's scary how quickly it does away with a happily running cluster, so be careful...
-- delete the entire cluster you've built, and unconfigure all the above (by running yakko delete <cluster-name>)
-- it allows you to easily add and destroy worker and infra nodes to suit your use case 
-- some basic operational stuff - once you have the cluster up, it will hint you, using "yakko [infra | ops] <command>"
+- rolls back individual failed stages so that you can fix if necessary and then keep going or just delete everything you've done so far and start afresh. It's scary how quickly it does away with a happily running cluster, so be careful...
+- delete the entire operational cluster you've built, and unconfigure all the above 
+- allows you to easily add and destroy worker and infra nodes to suit your use case 
+- some basic operational stuff - once you have the cluster up, it will hint you, using "yakko [infra | ops]"
 - but don't worry - you can build again right? Automatically...
 - What doesn't it do? I dunno yet. Tons of stuff I presume, but who doesn't want to have OCP in their study?
 
 ## WHAT YAKKO IS NOT
-It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see "Day 2 Ops)" as well as allowing you to delete all the configuration in your system, you should keep it!
+It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see "Day 2 Ops)" as well as allow you to delete all VMs and the configuration in your system, you should keep it!
 
 ## REQUIREMENTS
+Access to the internet...
 A single PC/server with:
 - RHEL 8 or Fedora 32/33/34 as the base, installed operating system
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
@@ -53,7 +54,6 @@ The testbed used to build and run 'yakko' is an Alienware Aurora R6 with an Inte
     
 ## NICE TO HAVES
 - Project cockpit is a good (though hungry) friend
-- access to the ol' internet
 - Linux skills - if you are even attempting at using this, you must have some already!
 - Your own DNS server that can handle wildcards (but YAKKO can otherwise assist)
 
