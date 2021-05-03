@@ -39,6 +39,7 @@ WORKERRAMSIZE=4000 # Recommended ... 2048!? Worked well with 5Gi. Setting up as 
 
 # This is in prep for building single node clusters, do not reverse!
 MASTERNODECOUNT=3  
+WORKERNODECOUNT=0
 
 #These two will go hand in hand but we'll keep them separate should one ever attempt a non-virtual network 
 BASENETWORK="192.168.140"
@@ -96,7 +97,7 @@ populate-clusterconfigfile() {
 }
 
 populate-yakkodefaults() {
-
+  
 	{
 		echo "CLUSTERNAME=${CLUSTERNAME}"
 		echo "CLUSTERDOMAIN=${CLUSTERDOMAIN}"
@@ -107,7 +108,6 @@ populate-yakkodefaults() {
 		echo "WEBSERVERIP=${WEBSERVERIP}"
 		echo "WEBSERVERPORT=${WEBSERVERPORT}"
 		echo "WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}"
-		# DEPRECATED ... echo "CLUSTERNODECONFIG=${CLUSTERNODECONFIG}"
 	
 		# NETWORK CONFIGURATION
 		echo "BASEMACADDRESS=${BASEMACADDRESS}"
@@ -130,6 +130,7 @@ populate-yakkodefaults() {
 	} > ${YAKKODEFAULTS}
 
 	source ${YAKKODEFAULTS}
+
 }
 
 ################ A FEW REUSABLE FUNCTIONS ################################################
@@ -242,7 +243,6 @@ get-node-fqdn()
 	# it returns a nodename with the FQDN attached
 
 	FQDNNODENAME=$1
-
 	echo ${FQDNNODENAME} | grep ${CLUSTERFQDN} > /dev/null 2>&1
 	[ $? -ne 0 ] && FQDNNODENAME=${FQDNNODENAME}.${CLUSTERFQDN}
 
@@ -281,16 +281,15 @@ delete-kvm-machine()
 	NODETODELETE=$1
 
 	# This is a safety measure...
+	NODETODELETEFQDN=$(get-node-fqdn $NODETODELETE)
 
-	NODETODELETE=$(get-node-fqdn $NODETODELETE)
-
-	check-node-name $NODETODELETE
+	check-node-name $NODETODELETEFQDN
 	if [ $? -eq 0 ]
 	then
-		virsh destroy ${NODETODELETE}
-		virsh undefine --domain ${NODETODELETE} --remove-all-storage
+		virsh destroy ${NODETODELETEFQDN}
+		virsh undefine --domain ${NODETODELETEFQDN} --remove-all-storage
 	else
-		echo "ERROR: Tried to delete non-OCP/YAKKO KVM machine: [${NODETODELETE}]"
+		echo "ERROR: Tried to delete non-OCP/YAKKO KVM machine: [${NODETODELETEFQDN}]"
 		exit
 	fi
 }
@@ -626,29 +625,23 @@ build-ocp-node() {
 
 approve-csrs-normal() {
 
-	CSRAPPROVALPID=0
+	# running oc here is a little trickier as this gets forked off, so we test for it before
+	[ -x ${OCPINSTALLSOURCE}/oc ] 
+	check-for-error-and-exit $? "Cannot process CSRs as this stage cannot execute command ${OCPINSTALLSOURCE}/oc"
 
-	if [ $CSRAPPROVALPID -eq 0 ]
-	then
-		# running oc here is a little tickier as this gets forked off, so we test for it before
-		[ -x ${OCPINSTALLSOURCE}/oc ] 
-		check-for-error-and-exit $? "Cannot process CSRs as this stage cannot execute command ${OCPINSTALLSOURCE}/oc"
+	# This runs in the backgound approving certificates as they come...
+	{
+		trap "echo; echo 'CSR Approvals (oc get csr) stopped...'; exit" SIGTERM
 
-		# This runs in the backgound approving certificates as they come...
-		{
-			trap "echo; echo 'CSR Approvals (oc get csr) stopped...'; exit" SIGQUIT
+		while [ 1 ] 
+		do
+			${OCPINSTALLSOURCE}/oc get csr 2>/dev/null | grep Pending | awk '{ print $1 }' | xargs ${OCPINSTALLSOURCE}/oc adm certificate approve > /dev/null 2>&1
+			#check-for-error-and-exit $? "Could not retrieve CSRs"
+			sleep 10
+		done
+	} &
 
-			while [ 1 ] 
-			do
-				${OCPINSTALLSOURCE}/oc get csr 2>/dev/null | grep Pending | awk '{ print $1 }' | xargs ${OCPINSTALLSOURCE}/oc adm certificate approve > /dev/null 2>&1
-				#check-for-error-and-exit $? "Could not retrieve CSRs"
-				sleep 10
-			done
-		} &
-		CSRAPPROVALPID=$!
-	fi
-		
-	trap 'kill -s SIGQUIT $CSRAPPROVALPID ; sleep 2; echo; echo "Shutting down CSR approvers, please wait..."; sleep 20; exit' SIGINT
+	return $!
 }
 
 
@@ -837,41 +830,37 @@ yakko-infra-operations() {
 				break
 			done
 		fi
-		echo
 
 		YAKKOSTAGE=0 # This is to artificially use the progress-stage framework
 		process-stage-configureocpworkernodes progress
-		if [ $? -ne 0 ]
-		then		
-			echo
-			echo "Worker nodes were not built. Exiting..."
-			echo
-			exit
-		fi
 
-		approve-csrs-normal	
+		approve-csrs-normal
+		CSRAPPROVALPID=$?
 
 		trap "echo;echo \"Node [${NEWNODENAME}]  has not joined the cluster - deleting...\"; delete-kvm-machine ${NEWNODENAME}; exit" SIGINT
 
+		echo
 		echo "Node(s) ready to begin integration into the cluster. This will take a few minutes..."
 		echo "To observe node status, run 'oc get nodes' on another terminal."
 		echo
 
+		# NEWNODELIST was populated during process-stage-configureocpworkernodes
 		while [ ! -z "${NEWNODELIST}" ]
 		do 
-			sleep 10
-
 			for EACHNODE in ${NEWNODELIST}
 			do
-				oc get node ${EACHNODE} 2>/dev/null  | grep -v NAME | grep -v "NotReady" | grep Ready >/dev/null 2>&1
+				oc get node ${EACHNODE} 2>/dev/null  | grep -v NAME | grep -v "NotReady" | grep Ready  >/dev/null 2>&1
 				if [ $? -eq 0 ]
 				then 
 					echo "Node (${EACHNODE}) has been added to the cluster and is in READY state "
 					echo
 					NEWNODELIST=$(echo ${NEWNODELIST} | sed -e "s/\ *${EACHNODE}//")
 				fi
+				sleep 10
 			done
 		done 
+
+		kill -s SIGTERM $CSRAPPROVALPID > /dev/null 2>&1
 
 		print-time-elapsed
 		echo
@@ -953,6 +942,7 @@ yakko-infra-operations() {
 		sed -i "/${NODENAME}/d" ${NETWORKXML}
 
 		#and we update the haproxy
+		echo
 		echo "Updating and restarting HAproxy"
 		sed -i "/${NODENAME}/ d" /etc/haproxy/haproxy.cfg
                 systemctl restart haproxy
@@ -2327,6 +2317,7 @@ process-stage-configureocpworkernodes() {
 		if [ "${DELETECLUSTERNAME}" == "${CLUSTERNAME}" ]
 		then
 			# Delete ALL worker nodes
+			# All other cleanup is done as the cluster gets wiped
                 	for NODETODELETE in $(virsh list --all --name | grep "node-")
                 	do
 				delete-kvm-machine ${NODETODELETE}
@@ -2335,7 +2326,28 @@ process-stage-configureocpworkernodes() {
 			# Delete nodes just added now with addnode
                 	for NODETODELETE in ${NEWNODELIST} 
                 	do
+				echo "Rollback - deleting node [$NODETODELETE]"
 				delete-kvm-machine ${NODETODELETE}
+				sed -i "/${NODETODELETE}/d" /root/.ssh/known_hosts >/dev/null 2>&1
+
+				# Update the virtual network
+				echo "Restarting virtual network"
+				cat ${NETWORKXML} | grep ${NODETODELETE} > /tmp/dhcp-yakko-line.xml #It's way too hard to pass this as an argument below!
+				if [ $? -eq 0 ]
+				then
+					virsh net-update ${NETWORKNAME} delete ip-dhcp-host /tmp/dhcp-yakko-line.xml --live --config
+					check-for-error-and-exit $? "Could not restart the virtual network"
+					rm /tmp/dhcp-yakko-line.xml
+					sed -i "/${NODETODELETE}/d" ${NETWORKXML}
+				fi
+
+				#and we update the haproxy
+				echo
+				echo "Updating and restarting HAproxy"
+				echo "sed -i "/${NODETODELETE}/ d" /etc/haproxy/haproxy.cfg > /dev/null 2>&1"
+				sed -i "/${NODETODELETE}/ d" /etc/haproxy/haproxy.cfg #> /dev/null 2>&1
+				systemctl restart haproxy
+				check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
 			done
 		fi
 	}
@@ -2430,7 +2442,7 @@ process-stage-approvecsrs() {
 
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "CSR approvals"
-		kill -9 $CSRAPPROVALPID > /dev/null 2>&1
+		kill -s SIGKILL $CSRAPPROVALPID > /dev/null 2>&1
 	}
 }
 
@@ -2487,7 +2499,7 @@ process-stage-reduceprometheusmemory() {
 
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "Prometheus memory changes"
-		kill -9 $PROMETHEUSPID > /dev/null 2>&1
+		kill -s SIGKILL $PROMETHEUSPID > /dev/null 2>&1
 		rm $CLUSTERSETUPDIR/prometheus-config.yaml >/dev/null 2>&1
 	}
 }
@@ -2609,204 +2621,6 @@ process-stage-continue-clusterconfiguration() {
 }
 
 
-QUESTIONS() {
-		### QUESTION: Cluster name  ## Not stored in YAKKO defaults
-		while [ 1 ]
-		do
-			if [ ! -z "${CLUSTERNAME}" ]
-			then
-				echo -n  "Enter the name of the OpenShift cluster to create (\"${CLUSTERNAME}\"): "
-			else
-				echo -n "Enter the name of the OpenShift cluster to create: "
-			fi
-			read RESPONSE
-
-			if [ -z "${RESPONSE}" -a ! -z "${CLUSTERNAME}" ]
-			then
-				echo "Cluster [${CLUSTERNAME}] will be created"
-				break
-			fi
-	
-			if [[ ${RESPONSE} =~ ^[a-z0-9]*$ ]]
-			then
-				CLUSTERNAME=${RESPONSE}
-				break
-			else
-				echo "Invalid cluster name. Please use lower-case characters and numbers only."
-			fi
-		done
-
-
-		### QUESTION: domain name ## Stored in YAKKO defaults
-       		echo
-		echo -n "Enter the DOMAIN name you wish to setup your cluster under (\"${CLUSTERDOMAIN}\"): "
-       	 	read RESPONSE
-		[ ! -z "$RESPONSE" ] && CLUSTERDOMAIN=$RESPONSE
-
-
-       		### QUESTION: basenetwork ## Stored in YAKKO defaults
-       		echo
-       		echo -n "Enter the SUBNET (/24) inside KVM that you want cluster under (\"${BASENETWORK}\"): "
-       		read RESPONSE
-       		[ ! -z "$RESPONSE" ] && BASENETWORK=$(echo $RESPONSE | cut -f1-3 -d.)
-
-
-		### QUESTION: Get repository for VMs ## Stored in YAKKO defaults
-		echo
-		while [ 1 ]
-		do
-			echo -n "Enter an (existing) directory where you wish to place the OCP VM disks (\"${OCPVMDISKDIR}\"): "
-			read RESPONSE
-			[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDISKDIR} && break
-			[ -e "$RESPONSE" -a -d "$RESPONSE" ]  && break
-
-			if [ ! -d "$RESPONSE" ]
-			then
-				echo "Invalid directory path. Please re-enter..."
-				continue
-                	fi
-        	done
-		OCPVMDISKDIR="$RESPONSE"
-
-		### QUESTION: Add worker nodes at build ##
-		WORKERNODECOUNT=0
-		echo
-		while [ 1 ]
-                do
-			echo "Worker nodes can be built at cluster creation or later."
-			echo "To build a cluster with 3 schedulable MASTER nodes, type '0'"
-			echo -n "How many worker nodes do you want to configure at cluster build time [0]: "
-			read VALUE
-			if [ ! -z "$VALUE" ]
-			then
-				NUMBERRE='^[0-9]+$'
-				if ! [[ $VALUE =~ $NUMBERRE ]] ; then
-					echo "Error: Not a number. Try again..."
-					continue
-				elif [ ${VALUE} -gt ${MAXWORKERNODES} ]
-				then
-					echo "You need to specify a number of workers up to ${MAXWORKERNODES} ]"
-					continue
-				else
-					WORKERNODECOUNT=${VALUE}
-					break
-				fi
-			else
-				NUMBER=0
-				echo "No worker nodes were requested. You can add nodes later with YAKKO."
-				break
-			fi
-		done
-
-		### QUESTION: RAM size confirmation (MASTERS)  ##
-		echo
-		while [ 1 ]
-                do
-                	echo -n "How much RAM (MiB) should be allocated to MASTER nodes [${MASTERRAMSIZE}]: "
-			read VALUE
-			if [ ! -z "$VALUE" ]
-			then
-				NUMBERRE='^[0-9]+$'
-				if ! [[ $VALUE =~ $NUMBERRE ]] ; then
-					echo "Error: Not a number. Try again..."
-					continue
-				else
-					MASTERRAMSIZE=$VALUE
-				fi
-			fi
-			break
-		done
-		echo
-
-		### QUESTION: RAM size confirmation (WORKERS)  ##
-		if [ ${WORKERNODECOUNT} -gt 0 ]
-		then 
-		 	while [ 1 ]
-                 	do
-                 		echo -n "How much RAM (MiB) should be allocated to WORKER nodes [${WORKERRAMSIZE}]: "
-		 		read VALUE
-		 		if [ ! -z "$VALUE" ]
-		 		then
-		 			NUMBERRE='^[0-9]+$'
-		 			if ! [[ $VALUE =~ $NUMBERRE ]] ; then
-		 				echo "Error: Not a number. Try again..."
-		 				continue
-		 			else
-		 				WORKERRAMSIZE=$VALUE
-		 			fi
-		 		fi
-		 		break
-		 	done
-		 	echo
-		fi
-
-		### QUESTION: Cluster version
-
-		# Now we get on with downloading the OCP binaries
-		# NOTE: There can be discrepancies between the installer version (OCPGETCLIENTVERSION) and the RHCOS images version (OCPGETIMAGEVERSION)
-		#	This script will download the lot under OCPGETCLIENTVERSION to keep a single point reference. This seems to make sense 
-		#	based on what the OCP mirror offers.
-		# 	HOWEVER, outside of the DOWNLOAD section of the script, the version will be known as OCPINSTALLVERSION
-	
-		# Get the OCP installer specifically for x86_64 
-		OCPPLATFORM=x86_64
-		OCPROOT=https://mirror.openshift.com/pub/openshift-v4/$OCPPLATFORM
-	
-		# This would get you the number for the latest version
-		LATEST=latest # because sometimes latest isn't there yet...
-		OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/latest"
-		OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/${LATEST}/latest"
-
-		wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt > /dev/null 2>&1
-		check-for-error-and-exit $? "Failed to download version file for latest OCP" 
-			
-	        OCPGETCLIENTVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
-		
-		query-user "Use latest OCP version available ($OCPGETCLIENTVERSION)" "Y" noauto
-
-	        if [ $? -ne 0 ]
-	        then
-			# Query what client is desired
-			while [ 1 ]
-			do
-				echo -n  'Enter OCP INSTALLER CLIENT version you require, e.g. "4.5.6" (may not work btw...): ' 
-				read OCPGETCLIENTVERSION
-				OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/$OCPGETCLIENTVERSION"
-		
-				wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/sha256sum.txt >/dev/null 2>&1
-				if [ $? -ne 0 ]
-				then
-					echo "Invalid version $OCPGETCLIENTVERSION, no content available"
-				else
-					break
-				fi
-			done
-
-			# Query what RHCOS is desired
-			while [ 1 ]
-			do
-				echo "Please refer to https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/${OCPGETCLIENTVERSION:0:3})"
-				echo -n  'Enter OCP RHCOS version you require, e.g. "4.5.6" (may also not work btw...): ' 
-				 # this is harder because of how the mirror is laid out
-				read OCPGETIMAGEVERSION
-				VERSIONMAJOR=$(echo $OCPGETIMAGEVERSION | cut -f1 -d.)
-				VERSIONMINOR=$(echo $OCPGETIMAGEVERSION | cut -f2 -d.)
-				VERSIONMICRO=$(echo $OCPGETIMAGEVERSION | cut -f3 -d.)
-				OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/$VERSIONMAJOR.$VERSIONMINOR/$OCPGETIMAGEVERSION"
-
-				wget -O $OCPWGETTMP $OCPDOWNLOADIMAGE/sha256sum.txt >/dev/null 2>&1
-				if [ $? -ne 0 ]
-				then
-					echo "Invalid version $OCPGETIMAGEVERSION, no content available"
-				else
-					break
-				fi
-			done
-		fi
-
-}
-
-
 process-stage-gatherclusterconfiguration() {
 
 	[ $1 == "progress" ] && {
@@ -2873,23 +2687,61 @@ process-stage-gatherclusterconfiguration() {
 	
 			### QUESTION: Get repository for VMs ## Stored in YAKKO defaults
 			echo
+			VMDIRSUCCESS=0
 			while [ 1 ]
 			do
-				echo -n "Enter an (existing) directory where you wish to place the OCP VM disks (\"${OCPVMDISKDIR}\"): "
-				read RESPONSE
-				[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDISKDIR} && break
-				[ -e "$RESPONSE" -a -d "$RESPONSE" ]  && break
-	
-				if [ ! -d "$RESPONSE" ]
+				while [ 1 ]
+				do
+					echo -n "Enter an (existing) directory where you wish to place the OCP VM disks (\"${OCPVMDISKDIR}\"): "
+					read RESPONSE
+					[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDISKDIR} 
+					break
+		        	done
+
+				OCPVMDISKDIR="$RESPONSE"
+				mkdir -p ${OCPVMDISKDIR} > /dev/null 2>&1
+				ERROR=$?
+				if [ $ERROR -ne 0 ]
 				then
-					echo "Invalid directory path. Please re-enter..."
+					echo "ERROR: Could not create/access directory [${OCPVMDISKDIR}] (mkdir error #$ERROR)"
+					echo "       specify another directory or CTRL-C to inspect your system."
+					echo
 					continue
-	                	fi
-	        	done
-			OCPVMDISKDIR="$RESPONSE"
+				fi
+
+				echo "Changing permissions for [${OCPVMDISKDIR}] and all paths above."
+			       	echo "All members of the tree need to have read/exec access so that user 'qemu' can run VMs in the destination."
+				cd ${OCPVMDISKDIR}
+				while [ 1 ] 
+				do
+					chmod o+rx . > /dev/null 2>&1
+					ERROR=$?
+					if [ $ERROR -ne 0 ]
+					then
+						echo "ERROR: Could not change access to directory [${PWD}] (chmod error #$ERROR)"
+						echo "       specify another directory or CTRL-C to inspect your system."
+						echo
+						break
+					fi
+					cd .. # This may not be elegant, but it works, we crawl the directory structure to the top
+					if [ "$PWD" == "/" ]
+					then
+						VMDIRSUCCESS=1
+						break
+					fi
+				done
+				cd ${YAKKOSETUPDIR} # One day I'll clean this up....
+
+				if [ ${VMDIRSUCCESS} -eq 1 ]
+				then
+					# All checks on the directory are complete
+					break
+				fi
+
+			done
+			
 	
 			### QUESTION: Add worker nodes at build ##
-			WORKERNODECOUNT=0
 			echo
 			while [ 1 ]
 	                do
@@ -2912,12 +2764,12 @@ process-stage-gatherclusterconfiguration() {
 						break
 					fi
 				else
-					NUMBER=0
+					WORKERNODECOUNT=0
 					echo "No worker nodes were requested. You can add nodes later with YAKKO."
 					break
 				fi
 			done
-	
+
 			### QUESTION: RAM size confirmation (MASTERS)  ##
 			echo
 			while [ 1 ]
@@ -3064,263 +2916,6 @@ process-stage-gatherclusterconfiguration() {
 		rm -rf $CLUSTERSETUPDIR > /dev/null 2>&1
 	}
 }
-
-
-process-stage-gatherclusterconfiguration-DEPRECATED() {
-
-	[ $1 == "progress" ] && {
-
-        	advance-stage-progression "Gather Cluster Configuration information"
-
-		# A cluster config does not exist - this should be the first run
-		
-		# Some of these are more "global" in nature so we store them in ${YAKKODEFAULTS}
-		# (which was separate functionality in earlier versions)
-
-
-		if [ "${YAKKOREBUILD}" -eq 1 ]
-		then
-			# If ${LASTBUILDCONFING} exists, we created a successful cluster before
-			# This can only be called with 'yakko rebuildcluster' with no cluster configured
-			# And for this to happen we get here with YAKKOREBUILD == 1
-
-			source ${LASTBUILDCONFIG}
-		fi
-
-		### QUESTION: Cluster name  ## Not stored in YAKKO defaults
-
-		while [ 1 ]
-		do
-			if [ ! -z "${CLUSTERNAME}" ]
-			then
-				echo -n  "Enter the name of the OpenShift cluster to create (\"${CLUSTERNAME}\"): "
-			else
-				echo -n "Enter the name of the OpenShift cluster to create: "
-			fi
-			read RESPONSE
-
-			if [ -z "${RESPONSE}" -a ! -z "${CLUSTERNAME}" ]
-			then
-				echo "Cluster [${CLUSTERNAME}] will be created"
-				break
-			fi
-	
-			if [[ ${RESPONSE} =~ ^[a-z0-9]*$ ]]
-			then
-				CLUSTERNAME=${RESPONSE}
-				break
-			else
-				echo "Invalid cluster name. Please use lower-case characters and numbers only."
-			fi
-		done
-	
-		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}
-		mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
-		NETWORKNAME=net-ocp-${CLUSTERNAME}
-		NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml
-
-
-		### QUESTION: domain name ## Stored in YAKKO defaults
-       		echo
-		echo -n "Enter the DOMAIN name you wish to setup your cluster under (\"${CLUSTERDOMAIN}\"): "
-       	 	read RESPONSE
-		[ ! -z "$RESPONSE" ] && CLUSTERDOMAIN=$RESPONSE
-
-		CLUSTERFQDN=${CLUSTERNAME}.${CLUSTERDOMAIN}
-		CLUSTERWEBURL="https://console-openshift-console.apps.${CLUSTERFQDN}"
-		CLUSTERAPIURL="https://api.${CLUSTERFQDN}:6443"
-	
-
-       		### QUESTION: basenetwork ## Stored in YAKKO defaults
-       		echo
-       		echo -n "Enter the SUBNET (/24) inside KVM that you want cluster under (\"${BASENETWORK}\"): "
-       		read RESPONSE
-       		[ ! -z "$RESPONSE" ] && BASENETWORK=$(echo $RESPONSE | cut -f1-3 -d.)
-
-
-		### QUESTION: Get repository for VMs ## Stored in YAKKO defaults
-		echo
-		while [ 1 ]
-		do
-			echo -n "Enter an (existing) directory where you wish to place the OCP VM disks (\"${OCPVMDISKDIR}\"): "
-			read RESPONSE
-			[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDISKDIR} && break
-			[ -e "$RESPONSE" -a -d "$RESPONSE" ]  && break
-
-			if [ ! -d "$RESPONSE" ]
-			then
-				echo "Invalid directory path. Please re-enter..."
-				continue
-                	fi
-        	done
-		OCPVMDISKDIR="$RESPONSE"
-
-
-		### QUESTION: Add worker nodes at build ##
-		WORKERNODECOUNT=0
-		echo
-		while [ 1 ]
-                do
-			echo "Worker nodes can be built at cluster creation or later."
-			echo "To build a cluster with 3 schedulable MASTER nodes, type '0'"
-			echo -n "How many worker nodes do you want to configure at cluster build time [0]: "
-			read VALUE
-			if [ ! -z "$VALUE" ]
-			then
-				NUMBERRE='^[0-9]+$'
-				if ! [[ $VALUE =~ $NUMBERRE ]] ; then
-					echo "Error: Not a number. Try again..."
-					continue
-				elif [ ${VALUE} -gt ${MAXWORKERNODES} ]
-				then
-					echo "You need to specify a number of workers up to ${MAXWORKERNODES} ]"
-					continue
-				else
-					WORKERNODECOUNT=${VALUE}
-					break
-				fi
-			else
-				NUMBER=0
-				echo "No worker nodes were requested. You can add nodes later with YAKKO."
-				break
-			fi
-		done
-
-		### QUESTION: RAM size confirmation (MASTERS)  ##
-		echo
-		while [ 1 ]
-                do
-                	echo -n "How much RAM (MiB) should be allocated to MASTER nodes [${MASTERRAMSIZE}]: "
-			read VALUE
-			if [ ! -z "$VALUE" ]
-			then
-				NUMBERRE='^[0-9]+$'
-				if ! [[ $VALUE =~ $NUMBERRE ]] ; then
-					echo "Error: Not a number. Try again..."
-					continue
-				else
-					MASTERRAMSIZE=$VALUE
-				fi
-			fi
-			break
-		done
-		echo
-
-		### QUESTION: RAM size confirmation (WORKERS)  ##
-		if [ ${WORKERNODECOUNT} -gt 0 ]
-		then 
-		 	while [ 1 ]
-                 	do
-                 		echo -n "How much RAM (MiB) should be allocated to WORKER nodes [${WORKERRAMSIZE}]: "
-		 		read VALUE
-		 		if [ ! -z "$VALUE" ]
-		 		then
-		 			NUMBERRE='^[0-9]+$'
-		 			if ! [[ $VALUE =~ $NUMBERRE ]] ; then
-		 				echo "Error: Not a number. Try again..."
-		 				continue
-		 			else
-		 				WORKERRAMSIZE=$VALUE
-		 			fi
-		 		fi
-		 		break
-		 	done
-		 	echo
-		fi
-
-		# We write a bunch of stuff for later retrieval in $YAKKODEFAULTS
-		CLUSTERPROXY="${BASENETWORK}.${PROXYADDRESS}"
-                WEBSERVERIP=${CLUSTERPROXY}
-                WEBSERVERPORT=8080
-
-		populate-yakkodefaults
-	
-		### QUESTION: Cluster version
-
-		# Now we get on with downloading the OCP binaries
-		# NOTE: There can be discrepancies between the installer version (OCPGETCLIENTVERSION) and the RHCOS images version (OCPGETIMAGEVERSION)
-		#	This script will download the lot under OCPGETCLIENTVERSION to keep a single point reference. This seems to make sense 
-		#	based on what the OCP mirror offers.
-		# 	HOWEVER, outside of the DOWNLOAD section of the script, the version will be known as OCPINSTALLVERSION
-	
-		# Get the OCP installer specifically for x86_64 
-		OCPPLATFORM=x86_64
-		OCPROOT=https://mirror.openshift.com/pub/openshift-v4/$OCPPLATFORM
-	
-		# This would get you the number for the latest version
-		LATEST=latest # because sometimes latest isn't there yet...
-		OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/latest"
-		OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/${LATEST}/latest"
-
-		wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt > /dev/null 2>&1
-		check-for-error-and-exit $? "Failed to download version file for latest OCP" 
-			
-	        OCPGETCLIENTVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
-		
-		query-user "Use latest OCP version available ($OCPGETCLIENTVERSION)" "Y" noauto
-
-	        if [ $? -ne 0 ]
-	        then
-			# Query what client is desired
-			while [ 1 ]
-			do
-				echo -n  'Enter OCP INSTALLER CLIENT version you require, e.g. "4.5.6" (may not work btw...): ' 
-				read OCPGETCLIENTVERSION
-				OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/$OCPGETCLIENTVERSION"
-		
-				wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/sha256sum.txt >/dev/null 2>&1
-				if [ $? -ne 0 ]
-				then
-					echo "Invalid version $OCPGETCLIENTVERSION, no content available"
-				else
-					break
-				fi
-			done
-
-			# Query what RHCOS is desired
-			while [ 1 ]
-			do
-				echo "Please refer to https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/${OCPGETCLIENTVERSION:0:3})"
-				echo -n  'Enter OCP RHCOS version you require, e.g. "4.5.6" (may also not work btw...): ' 
-				 # this is harder because of how the mirror is laid out
-				read OCPGETIMAGEVERSION
-				VERSIONMAJOR=$(echo $OCPGETIMAGEVERSION | cut -f1 -d.)
-				VERSIONMINOR=$(echo $OCPGETIMAGEVERSION | cut -f2 -d.)
-				VERSIONMICRO=$(echo $OCPGETIMAGEVERSION | cut -f3 -d.)
-				OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/$VERSIONMAJOR.$VERSIONMINOR/$OCPGETIMAGEVERSION"
-
-				wget -O $OCPWGETTMP $OCPDOWNLOADIMAGE/sha256sum.txt >/dev/null 2>&1
-				if [ $? -ne 0 ]
-				then
-					echo "Invalid version $OCPGETIMAGEVERSION, no content available"
-				else
-					break
-				fi
-			done
-		fi
-		echo
-	
-		populate-clusterconfigfile
-
-		### QUESTION (last): Run auto setup
- 
-		# We reload the defaults...
-		source ${YAKKODEFAULTS} > /dev/null 2>&1
-
-		echo
-		query-user "Attempt AUTOMATIC creation of cluster [${CLUSTERNAME}]" "Y" noauto  && AUTOSETUP=1
-	}
-	# NOTE: THIS STAGE MUST PRECEDE execute-yakko-stages
-	# 	SEE MAIN AT BOTTOM
-
-	[ $1 == "rollback" ] && {
-		rollback-stage-progression "Cluster configuration gather"
-		rm ${CLUSTERCONFIGFILE} > /dev/null 2>&1
-		rm -rf $CLUSTERSETUPDIR > /dev/null 2>&1
-	}
-}
-
-
 
 
 execute-yakko-stages() {
