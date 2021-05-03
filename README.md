@@ -36,6 +36,7 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 
 ## REQUIREMENTS
 Access to the internet!
+
 A single PC/server with:
 - RHEL 8 or Fedora 32/33/34 as the base, installed operating system
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
