@@ -54,7 +54,7 @@ Tested combinations to date:
 1) Get the 'yakko' script as user "root": 
     - You can clone the repo (ideally on /) OR  
     - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
-2) run "yakko" as root - e.g. `[root@ocphost YAKKO]# ~/Downloads/yakko`
+2) run "yakko" (always!) as root - e.g. `[root@ocphost YAKKO]# ~/Downloads/yakko`
 3) **the script will copy itself to /YAKKO** - if it's not already there based on what you did in step (1) - and ask you to re-run from there 
 4) 'yakko' will start the install process when there is no cluster defined, so no further parameters are necessary.
 5) follow instructions, my suggestion is that you run it manually until you get the hang of it.
