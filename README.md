@@ -77,7 +77,7 @@ Active Operators: 31/31
 
              state      
 Web Console: [ ✔ ]  https://console-openshift-console.apps.prod.localdomain
-API Server:  [ ✔ ]  https://api.prod.pichus.net:6443
+API Server:  [ ✔ ]  https://api.prod.localdomain:6443
 
 Administrator: kubeadmin
 Password:      jM45H-GdyEv-WGxcY-QBHaP
