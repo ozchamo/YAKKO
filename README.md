@@ -3,7 +3,7 @@
 
 
 ## INTRODUCTION
-If you want to run up an OpenShift cluster, and have a big PC/small server (mine is a i7-7700 w/64GB RAM) then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
+If you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
 
 YAKKO was built around the concept of having ONE script/installer/manager that does it all, using the underlying operating system as the installation/operation platform and resource server/service. As a prime example, YAKKO depends on libvirt/KVM and so it will install and configure required packages on your server to build and run OpenShift VMs, just as it may be used as the DNS resource should you not have your own DNS. Because of this, YAKKO is a bit opinionated, but then again, it's not built for creating "production ready" clusters, and so it should suit most people with a passing need or interest in having an OpenShift cluster around (or again.
 
@@ -35,13 +35,21 @@ In a nutshell, what does yakko do?
 It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see "Day 2 Ops)" as well as allowing you to delete all the configuration in your system, you should keep it!
 
 ## REQUIREMENTS
-A PC/server running RHEL8 or Fedora 32/33 with enough RAM such that you can build:
-- 3 node clusters in a server with 32GB+ RAM (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
-- Many node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
+A single PC/server with:
+- RHEL 8 or Fedora 32/33/34 as the base, installed operating system
+- 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
+- Multi-node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
+- 2.5GB of disk space for the install files (yakko will accumulate older OCP versions so keep an eye on the "images" directory within /YAKKO)
+- SSD class storage, spinning disk has never been tested:
+    - 3 masters required 60GB (20GB each)
+    - worker nodes require 20GB each
+
 Tested combinations to date:
-- RHEL 8.2, 8.3
+- RHEL 8.2, 8.3 
 - Fedora 32, 33, 34
 - OpenShift 4.3, 4.5, 4.6, 4.7
+
+The testbed used to build and run 'yakko' is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes.
     
 ## NICE TO HAVES
 - Project cockpit is a good (though hungry) friend
@@ -55,13 +63,14 @@ Tested combinations to date:
     - You can clone the repo (ideally on /) OR  
     - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
 2) run "yakko" (always!) as root - e.g. `[root@ocphost YAKKO]# ~/Downloads/yakko`
-3) **the script will copy itself to /YAKKO** - if it's not already there based on what you did in step (1) - and ask you to re-run from there 
-4) 'yakko' will start the install process when there is no cluster defined, so no further parameters are necessary.
-5) follow instructions, my suggestion is that you run it manually until you get the hang of it.
-6) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week :)
-7) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
-8) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
-9) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
+3) **the script will copy itself to /YAKKO** - if it's not already there based on what you did in step (1) - and ask you to re-run from there
+4) and... you must ALWAYS run yakko from within /YAKKO. Do not run it elsewhere, it won't work "for now"
+5) 'yakko' will start the install process when there is no cluster defined, so no further parameters are necessary
+6) follow instructions, my suggestion is that you run it manually until you get the hang of it
+7) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week, and since keeping a tally, 70+ clusters...
+8) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
+9) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
+10) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
 
 ```
 __________________________________________________________________________
