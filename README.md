@@ -35,7 +35,7 @@ In a nutshell, what does yakko do?
 It is not a management tool for OpenShift. It has a small overlay of features to assist in the "automation" of getting things done that may otherwise be repetitive, but once your cluster is up, you can delete YAKKO for all you know, but since it can do a few things post install (see "Day 2 Ops)" as well as allow you to delete all VMs and the configuration in your system, you should keep it!
 
 ## REQUIREMENTS
-Access to the internet
+Access to the internet!
 A single PC/server with:
 - RHEL 8 or Fedora 32/33/34 as the base, installed operating system
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
