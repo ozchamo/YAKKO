@@ -124,9 +124,7 @@ OPTION is one of:
 ```
 
 Oh, and one final, now documented little back door, when you are recreating the same cluster often, you can run, no questions asked: 
-```
-yakko rebuildcluster
-'''
+`yakko rebuildcluster`
 
 ## WHAT IS YAKKO MISSING?  (Backlog of sorts?)
 Short of this being a backlog...
