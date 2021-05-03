@@ -40,7 +40,7 @@ A PC/server running RHEL8 or Fedora 32/33 with enough RAM such that you can buil
 - Many node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
 Tested combinations to date:
 - RHEL 8.2, 8.3
-- Fedora 32, 33
+- Fedora 32, 33, 34
 - OpenShift 4.3, 4.5, 4.6, 4.7
     
 ## NICE TO HAVES
@@ -64,28 +64,27 @@ Tested combinations to date:
 9) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
 
 ```
-_______________________________________________________________________________________
-YAKKO: Yet Another KVM Konfigurator for Openshift
-_______________________________________________________________________________________
+__________________________________________________________________________
 
-CLUSTER: prod.localdomain
+YAKKO: Yet Another KVM Konfigurator for Openshift
+__________________________________________________________________________
+
+CLUSTER: prod.localdomain  
 
 Active Masters:   3
 Active Nodes:     2 (workers/infra)
 Active Operators: 31/31
 
-The console and API server appear to be operational:
-
-Web console:   https://console-openshift-console.apps.prod.localdomain
-API server:    https://api.prod.localdomain:6443
+             state      
+Web Console: [ ✔ ]  https://console-openshift-console.apps.prod.localdomain
+API Server:  [ ✔ ]  https://api.prod.pichus.net:6443
 
 Administrator: kubeadmin
-Password:      ZefST-hvBBY-fR39z-73ghN
+Password:      jM45H-GdyEv-WGxcY-QBHaP
 
 - To use OpenShift's 'oc' command run: "source ocp-setup-env" in this shell.
 - To make infrastructure changes use:  "yakko infra <options>"  
 - To make operational changes use:     "yakko ops <options>" 
-_______________________________________________________________________________________
 
 ```
 
@@ -124,6 +123,9 @@ OPTION is one of:
     - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!  
 ```
 
+Oh, and one final, now documented little back door, when you are recreating the same cluster often, you can run, no questions asked: 
+yakko rebuildcluster
+
 ## WHAT IS YAKKO MISSING?  (Backlog of sorts?)
 Short of this being a backlog...
 - BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but I am yet to build a business case
@@ -132,7 +134,7 @@ Short of this being a backlog...
 - Many 'certainty' principles of higher level systems administration, this said, it tries to keep your firewall on, your SELinux running etc etc.
 
 ## COMMITMENT and ACKNOWLEDGEMENTS
-- I hereby plegde to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
+- I hereby pledge to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 - I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
 It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
 But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it!
