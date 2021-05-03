@@ -62,7 +62,7 @@ OCPWGETTMP=/tmp/ocpsetupwget.tmp
 OCPVMDISKDIR=/var/lib/libvirt/images
 CLUSTERDOMAIN=localdomain  
 DNSMASQCONFIGFILE=/etc/NetworkManager/dnsmasq.d/dnsmasq-${YAKKONAME}.conf
-LASTBUILDCONFIG=.lastbuildconfig
+LASTBUILDCONFIG=.lastyakkobuild
 YAKKOREBUILD=0 
 
 # Some parameter options
@@ -2987,17 +2987,33 @@ then
 	exit
 fi
 
+CALLINGDIRECTORY=$(dirname $(realpath $0))
+
 cd ${YAKKOSETUPDIR} >/dev/null 2>&1 # Just change to the directory of action from hereon
 if [ $? -eq 1 ]
 then 
 	mkdir ${YAKKOSETUPDIR}
 	cp $0 ${YAKKOSETUPDIR}
-
-	echo Created directory ${YAKKOSETUPDIR}
-	echo
-	echo Execute ${YAKKOSETUPDIR}/${YAKKONAME} to configure OpenShift
-	echo
+	if [ $? -eq 0 ]
+	then
+		rm $0
+		echo Created directory ${YAKKOSETUPDIR}
+		echo
+		echo Execute ${YAKKOSETUPDIR}/${YAKKONAME} to configure OpenShift
+		echo
+	else
+		echo "Unable to create diretory /YAKKO. Please check and rerun!"
+	fi
 	exit
+else
+	if [ ${CALLINGDIRECTORY} != "/YAKKO" ]
+	then
+		echo
+		echo "You are not calling the installed version of 'yakko' in /YAKKO, exiting."
+		echo "(You called 'yakko' from [${CALLINGDIRECTORY}])"
+		echo
+		exit
+	fi
 fi
 
 # We load YAKKO defaults whether they exist... or not.
