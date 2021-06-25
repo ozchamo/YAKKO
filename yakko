@@ -2208,8 +2208,9 @@ process-stage-httpserver() {
 	
 			install-package-if-missing httpd
 
-			echo "<H1>YAKKO WEB SERVER is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
-			echo "<H1>It is serving files for cluster build with OCP Version ${OCPINSTALLVERSION}</H1>" >> $IMAGEREPO/index.html # to have a test file there...
+			echo "<BR>"
+			echo "<H1>The YAKKO web server is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
+			echo "<H1>It is serving files for cluster builds with OCP Version<A HREF=${OCPINSTALLVERSION}>${OCPINSTALLVERSION}</A></H1>" >> $IMAGEREPO/index.html # to have a test file there...
 		
 			{
 				echo "Listen ${WEBSERVERIP}:${WEBSERVERPORT}"
@@ -2740,9 +2741,9 @@ process-stage-waitforocpinstalltocomplete() {
 			else
 				echo
 				print-in-green "IMPORTANT:"
-				print-in-green "	- you DO NOT have a registry -> yakko ops localregistry"
-				print-in-green "	- you cannot access the cluster from another computer -> yakko infra openaccess"
-				print-in-green "	- you have no user DB-> yakko ops htpasswd administrator &  yakko ops useradd <user>"
+				print-in-green " - you DO NOT have a registry -> yakko ops localregistry"
+				print-in-green " - you cannot access the cluster from another computer -> yakko infra openaccess"
+				print-in-green " - you have no user DB-> yakko ops htpasswd administrator &  yakko ops useradd <user>"
 				print-in-green ${SEPARATIONLINE}
 				
 				# We build the 'last successful config' file for further auto
@@ -3073,7 +3074,7 @@ process-stage-gatherclusterconfiguration() {
 				
 		        OCPGETCLIENTVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 
-			OCPIMAGESONFILE=$(ls -d images/[0-9]* | cut -f2 -d/)
+			OCPIMAGESONFILE=$(ls -d images/[0-9]* 2>/dev/null | cut -f2 -d/)
 
 			SINGLEMASTERALLOWED=0 # This is 1 only if we confirm you are on OCP 4.8 or later (forget 4.3, too old)
 
@@ -3424,12 +3425,12 @@ then
 		# This is not even installed!
 		echo
 		echo "${YAKKONAME} is not installed in [${CALLINGDIRECTORY}]."
-		echo -n "Enter the directory where you want to install ${YAKKONAME} [${YAKKOSETUPDIR}]: "
+		echo -n "Enter the directory where you want to install ${YAKKONAME} [/YAKKO]: "
 		read RESPONSE
 
 		if [ -z "${RESPONSE}" ]
 		then
-			RESPONSE=${YAKKOSETUPDIR}
+			RESPONSE=/YAKKO
 		fi
 
 		mkdir ${RESPONSE} > /dev/null 2>&1
@@ -3463,6 +3464,7 @@ then
 
 	cp $0 ${RESPONSE}
 	check-for-error-and-exit $? "Could not copy ${YAKKONAME} to ${RESPONSE}"
+	chmod +x ${RESPONSE}/${YAKKONAME}
 	touch ${RESPONSE}/.yakkohome
 	check-for-error-and-exit $? "Could not create installer stub in ${RESPONSE}"
 
