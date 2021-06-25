@@ -2208,8 +2208,7 @@ process-stage-httpserver() {
 	
 			install-package-if-missing httpd
 
-			echo "<BR>"
-			echo "<H1>The YAKKO web server is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
+			echo "<BR><H1>The YAKKO web server is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
 			echo "<H1>It is serving files for cluster builds with OCP Version<A HREF=${OCPINSTALLVERSION}>${OCPINSTALLVERSION}</A></H1>" >> $IMAGEREPO/index.html # to have a test file there...
 		
 			{
