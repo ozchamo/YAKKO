@@ -47,9 +47,9 @@ A single PC/server with:
     - worker nodes require 20GB each
 
 Tested combinations to date:
-- RHEL 8.2, 8.3 
+- RHEL 8.2, 8.3, 8.4 
 - Fedora 32, 33, 34
-- OpenShift 4.3, 4.5, 4.6, 4.7
+- OpenShift 4.3, 4.5, 4.6, 4.7 and... 4.8 rc0 (And... some nightlies)
 
 The testbed used to build and run 'yakko' is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes.
     
@@ -76,25 +76,25 @@ The testbed used to build and run 'yakko' is an Alienware Aurora R6 with an Inte
 ```
 __________________________________________________________________________
 
-YAKKO: Yet Another KVM Konfigurator for Openshift
+ YAKKO: Yet Another KVM Konfigurator for Openshift
 __________________________________________________________________________
 
-CLUSTER: prod.localdomain  
+ CLUSTER: myopenshiftcluster.localdomain   (Built: 25-Jun-2021@18:39:06)
 
-Active Masters:   3
-Active Nodes:     2 (workers/infra)
-Active Operators: 31/31
+ Active Masters:   3/3
+ Active Nodes:     0/0 (workers/infra)
+
+ Active Operators: 31/31
 
              state      
-Web Console: [ ✔ ]  https://console-openshift-console.apps.prod.localdomain
-API Server:  [ ✔ ]  https://api.prod.localdomain:6443
+ Web Console: [ ✔ ]  https://console-openshift-console.apps.myopenshiftcluster.localdomain
+ API Server:  [ ✔ ]  https://api.myopenshiftcluster.localdomain:6443
 
-Administrator: kubeadmin
-Password:      jM45H-GdyEv-WGxcY-QBHaP
+ Administrator: super  (Password not available for display)
 
-- To use OpenShift's 'oc' command run: "source ocp-setup-env" in this shell.
-- To make infrastructure changes use:  "yakko infra <options>"  
-- To make operational changes use:     "yakko ops <options>" 
+ - To use OpenShift's 'oc' command --> source ocp-setup-env  (in this shell)
+ - To make infrastructure changes ---> yakko infra <options>
+ - To make operational changes ------> yakko ops <options>
 
 ```
 
@@ -130,17 +130,18 @@ OPTION is one of:
     - mastersched   -> enable/disable master scheduling  
     - nodelabel     -> Change the label of a node between worker <-> infra  
     - localregistry -> enable a local registry so you can actually use the cluster  
+    - ingresscert   -> install an existing wildcard certificate
     - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!  
 ```
 
-Oh, and one final, now documented little back door, when you are recreating the same cluster often, you can run, no questions asked: 
+Oh, and one final little back door, when you are recreating the same cluster often, you can run, no questions asked: 
 
 `     yakko rebuildcluster`
 
 ## WHAT IS YAKKO MISSING?  (Backlog of sorts?)
 Short of this being a backlog...
 - BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but I am yet to build a business case
-- Setting up Chrony as an "ops" function
+- Setting up Chrony as an "ops" function (though this seems to be covered in 4.7+)
 - Adding nodes from other physical machines and moving virtual nodes around (which may well defeat YAKKO's own purpose)
 - Many 'certainty' principles of higher level systems administration, this said, it tries to keep your firewall on, your SELinux running etc etc.
 
