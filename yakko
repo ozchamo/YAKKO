@@ -3075,8 +3075,6 @@ process-stage-gatherclusterconfiguration() {
 
 			OCPIMAGESONFILE=$(ls -d images/[0-9]* 2>/dev/null | cut -f2 -d/)
 
-			SINGLEMASTERALLOWED=0 # This is 1 only if we confirm you are on OCP 4.8 or later (forget 4.3, too old)
-
 			while [ 1 ]
 			do
 				echo "What release version do you want to install:"
@@ -3160,9 +3158,6 @@ process-stage-gatherclusterconfiguration() {
 
 		        		OCPGETCLIENTVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 					echo "OCP pre-release version [$OCPGETCLIENTVERSION] will be downloaded to ${YAKKOSETUPDIR}/images"
-
-					SINGLEMASTERALLOWED=1
-
 					break
 				elif [ "$RESPONSE" == "5" ]
 				then
@@ -3177,8 +3172,6 @@ process-stage-gatherclusterconfiguration() {
 		        		OCPGETCLIENTVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 					echo "OCP nightly version [$OCPGETCLIENTVERSION] will be downloaded to ${YAKKOSETUPDIR}/images"
 
-					SINGLEMASTERALLOWED=1
-
 					break
 				else
 					echo
@@ -3189,7 +3182,7 @@ process-stage-gatherclusterconfiguration() {
 
 
 			# Experimental I said!
-			if [ "$SINGLEMASTERALLOWED" == 1 ]
+			if [ $(echo $OCPGETCLIENTVERSION | cut -f2 -d.) -ge 8  ]
 			then
 				### QUESTION: Master node count ## EXPERIMENTAL until 4.8 release
 				echo
