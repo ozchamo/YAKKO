@@ -13,6 +13,8 @@
 # Inspirational documentation for this:
 # https://github.com/eitchugo/openshift-libvirt/blob/master/OpenShift_4_libvirt_install_1_master.md
 
+YAKKOVERSION=1.00 # There it is folks
+
 ##########################################################################
 # BACKLOG:
 #
@@ -49,6 +51,7 @@ WORKERRAMSIZE=6000 # Recommended ... 2048!? Worked well with 5Gi. Setting up as 
 COREMACADDRESS="52:54:00:4a"
 PROXYADDRESS=1  # So that the overall "proxy" to the cluster is BASENETWORK.PROXY e.g. 192.168.140.1
 BASENETWORK="192.168.140"
+WEBSERVERPORT=8080 # This may have to change
 
 # File and directory variables used throughout
 YAKKONAME=yakko   # In case we want to change the name of the script
@@ -90,6 +93,7 @@ populate-clusterconfigfile() {
 		echo "NODECOUNT=0"
 		echo "OCPSSHKEY=${OCPSSHKEY}"
 		echo "HAPROXYCONFIGFILE=${HAPROXYCONFIGFILE}"
+		echo "CLUSTERVERSION=${YAKKOVERSION}"
 		
 	} > ${CLUSTERCONFIGFILE}
 
@@ -106,8 +110,8 @@ populate-yakkodefaults() {
 		echo "WORKERNODECOUNT=${WORKERNODECOUNT}"
 		echo "CLUSTERPROXY=${CLUSTERPROXY}"
 		echo "WEBSERVERIP=${WEBSERVERIP}"
-		echo "WEBSERVERPORT=${WEBSERVERPORT}"
-		echo "WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}"
+		echo "MASTERRAMSIZE=${MASTERRAMSIZE}"
+		echo "WORKERRAMSIZE=${WORKERRAMSIZE}"
 	
 		# NETWORK CONFIGURATION
 		echo "BASEMACADDRESS=${BASEMACADDRESS}"
@@ -396,6 +400,89 @@ pick-a-node() {
 }
 	
 
+compose-html-cluster-report() {
+
+	# This here builds a landing page for the info of the last cluster built
+	# the web server left a file index.html sitting there
+
+	# To be honest, this just makes the whole thing look more professional ;)
+
+
+	lsof -i -P -n | grep LISTEN | grep "${YAKKOHOSTIP}:${WEBSERVERPORT} "
+	if [ $? -eq 1 ]
+	then
+		# Nothing is listening on port ${WEBSERVERPORT} on the host side so we spruce it up 
+
+		{
+
+			echo "# WEBSERVER PAGE on host port"
+			echo "Listen ${YAKKOHOSTIP}:${WEBSERVERPORT}"
+			echo "<VirtualHost ${YAKKOHOSTIP}:${WEBSERVERPORT}>"
+			echo "	DocumentRoot ${IMAGEREPO}"
+	    		echo "	<Directory ${IMAGEREPO}>"
+	       		echo "		Options Indexes FollowSymLinks"
+	       		echo "		Require all granted"
+	       		echo "		AllowOverride None"
+	    		echo "	</Directory>"
+			echo "</VirtualHost>"
+	
+		} >> ${HTTPDCONFIGFILE}
+
+		systemctl restart httpd
+		if [ $? -ne 0 ]
+		then
+			# OK, that didn't work for some reasong, so we revert, no biggie
+			sed -i "/WEBSERVER PAGE/,$ d" ${HTTPDCONFIGFILE}
+			systemctl restart httpd
+			HTMLREPORTHOST=${CLUSTERPROXY}
+		else
+			HTMLREPORTHOST=${YAKKOHOSTIP}
+		fi
+	fi
+
+	cat <<HTMLCONTENT > $IMAGEREPO/index.html
+
+<HTML>
+<HEAD>
+<META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<LINK REL="stylesheet" HREF="https://fonts.googleapis.com/css?family=Saira+Condensed">
+<STYLE>
+                H2 {
+                        font-family: 'Saira Condensed', sans-serif;
+                                font-size: 34px;
+                }
+                P {
+                        font-family: 'Saira Condensed', sans-serif;
+                        font-size: 24px;
+                }
+</STYLE>
+</HEAD>
+
+<BODY>
+
+<A HREF=https://ozchamo.github.io/YAKKO/> <IMG SRC="https://ozchamo.github.io/YAKKO/yakkologo.png" height=400 ALIGN="Left" style="margin-right: 30;"> </A>
+<BR>
+<H2>OpenShift Cluster [$CLUSTERNAME] is available on this server:</H2>
+
+<P>
+<B>Console URL:</B> &nbsp;<A HREF="${CLUSTERWEBURL}" TARGET="_blank">${CLUSTERWEBURL}</A>
+<BR>
+<B>API server:</B> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${CLUSTERAPIURL}</P>
+
+<P>Administrator: kubeadmin
+<BR>
+Password: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;$(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)<BR>
+<BR>
+(Version: ${OCPINSTALLVERSION} &nbsp;&nbsp;Build date: $(echo ${CLUSTERCOMPLETE} | awk '{print $4}'))
+</P>
+</BODY>
+</HTML>
+
+HTMLCONTENT
+
+}
+
+
 check-cluster-state() {
 	# Call: check-cluster-state <0|1> ["api"]
 	# if $1 ==  0 don't print state
@@ -521,11 +608,10 @@ check-cluster-state() {
 		fi
 
 		# AND WE EXIT after printing STATUS of the cluster
-
 		# We exit if we are not still building the cluster ;)
 		exit
 	else
-		# We are not being asked to pring anything
+		# We are not being asked to print anything
 		# We manipulate the return value if we are just being asked about the API server
 		if [ ${SPECIALQUERY} == "api" -a ${OCPACCESSSTATUS} == 2 ]
 		then
@@ -592,7 +678,12 @@ build-ocp-node() {
 	NODEDISKSIZE=$5
 	IGNITIONFILE=$6
 
-	echo "Building OCP node: ${NODEHOSTNAME} (MAC Addr: ${NODEMACADDRESS})"
+	echo ">>> Building OCP node: ${NODEHOSTNAME}.${CLUSTERFQDN}"
+	echo
+	echo "Configuration:"
+       	echo "- vCPUs:  ${NODEVCPUS}"
+	echo "- Memory: ${NODERAMSIZE} MiB"
+       	echo "- MAC Addr: ${NODEMACADDRESS}"
 
 	if [ $(echo ${OCPINSTALLVERSION} | cut -c3 ) -gt 5 ]  # We are on OCP 4.6 or higher
 	then
@@ -1255,6 +1346,7 @@ yakko-cluster-operations() {
 			echo
 			echo "Added [$NEWUSER] admin user with cluster-admin role successfuly"
 			echo
+			YAKKOADMIN=${NEWUSER}
 			echo "YAKKOADMIN=${NEWUSER}" >> ${CLUSTERCONFIGFILE}
 
 			if [ -z "$3" ]
@@ -1271,6 +1363,10 @@ yakko-cluster-operations() {
 				oc --user=admin delete secret kubeadmin -n kube-system
 				[ $? -eq 0 ] && echo "YAKKOADMIN=${NEWUSER}" >> ${CLUSTERCONFIGFILE}
 				echo "Note that the system:admin account is still available"
+
+				# and ... the webpage
+				sed -i "s/kubeadmin/${YAKKOADMIN}/" $IMAGEREPO/index.html
+				sed -i "/Password:/d" $IMAGEREPO/index.html
 				echo
 			fi
 	
@@ -1568,7 +1664,7 @@ yakko-cluster-operations() {
 				then
 					echo -n "Enter path to certificate bundle: "
 				else
-					echo "Enter path to certificate bundle [$CERTBUNDLEFILE]: "
+					echo -n "Enter path to certificate bundle [$CERTBUNDLEFILE]: "
 				fi
 				read CERTBUNDLEALTFILE
 	
@@ -1849,7 +1945,7 @@ process-stage-virtualnetwork() {
 			
 			echo Defining network at $NETWORKXML
 			virsh net-define --file $NETWORKXML
-			check-for-error-and-exit $? "Defined inactive networks are: $(virsh net-list --inactive)"
+			check-for-error-and-exit $? "Error defining virtual network at $NETWORKXML. Check 'virsh net-list --all'"
 			
 			echo Setting network to start on boot...
 			virsh net-autostart ${NETWORKNAME}
@@ -2082,8 +2178,10 @@ process-stage-loadbalancer() {
 				echo "    mode tcp"
 				echo "    balance source"
 				echo "    server master-0.${CLUSTERFQDN} ${MASTER0IP}:443 check inter 1s"
-				echo "    server master-1.${CLUSTERFQDN} ${MASTER1IP}:443 check inter 1s"
-				echo "    server master-2.${CLUSTERFQDN} ${MASTER2IP}:443 check inter 1s"
+				[ ${MASTERNODECOUNT} -gt 1 ] && {
+					echo "    server master-1.${CLUSTERFQDN} ${MASTER1IP}:443 check inter 1s"
+					echo "    server master-2.${CLUSTERFQDN} ${MASTER2IP}:443 check inter 1s"
+				}
 				echo "    # addingressrouternode443"
 			} > ${HAPROXYCONFIGFILE}
 
@@ -2200,6 +2298,44 @@ process-stage-httpserver() {
 
 		ask-user "Configure and enable HTTP Server (port 8080 in virtual network) for install on this host" "Y" && {
 
+			# First, make sure that nothing is listening already on port ${WEBSERVERPORT}
+
+			CANDIDATEPORT=${WEBSERVERPORT}
+			while [ 1 ] 
+			do
+				lsof -i -P -n | grep LISTEN | grep ":${CANDIDATEPORT} " >/dev/null
+				RESULT1=$?
+				semanage port -l | grep ${CANDIDATEPORT} | grep http >/dev/null 2>&1
+				RESULT2=$?
+
+				if [ $RESULT1 -eq 1 -a $RESULT2 -eq 0 ]
+				then
+					WEBSERVERPORT=$CANDIDATEPORT 
+					semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT} 2>/dev/null
+					WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}
+					echo "WEBSERVERPORT=${WEBSERVERPORT}" >> ${YAKKODEFAULTS}
+					echo "WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}" >> ${YAKKODEFAULTS}
+					break
+				else
+					echo "ERROR: Port ${CANDIDATEPORT} is not available for serving RHCOS images."
+					echo "       If this is not something you can change, enter an alternative port"
+					echo "       now, or press <CTRL-C> to address."
+					echo
+					echo -n "Enter alternative (4-digit) port for RHCOS image webserver: "
+					read RESPONSE
+					if [[ ${RESPONSE} =~ ^[0-9]+[0-9]+[0-9]+[0-9]+$ ]]  
+					then
+						echo "Testing port ${RESPONSE} for availability"
+						echo
+						CANDIDATEPORT=$RESPONSE
+						sleep 1
+					else
+						echo "That's not a port number, try again!"
+					fi
+				fi
+			done 
+			echo "Using port [${WEBSERVERPORT}] for RHCOS image delivery"
+
 			# Now that we know what we are running up, we can set the directory to provide the sources
 			# From the below dir, things will get cookin'
 			OCPINSTALLSOURCE=$IMAGEREPO/$OCPINSTALLVERSION
@@ -2208,8 +2344,7 @@ process-stage-httpserver() {
 	
 			install-package-if-missing httpd
 
-			echo "<BR><H1>The YAKKO web server is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
-			echo "<H1>It is serving files for cluster builds with OCP Version<A HREF=${OCPINSTALLVERSION}>${OCPINSTALLVERSION}</A></H1>" >> $IMAGEREPO/index.html # to have a test file there...
+			echo "<BR><BR><H1>The YAKKO web server is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
 		
 			{
 				echo "Listen ${WEBSERVERIP}:${WEBSERVERPORT}"
@@ -2245,6 +2380,7 @@ process-stage-httpserver() {
 		rollback-stage-progression "Unconfiguring installation webserver - content will remain in place."
 		rm ${HTTPDCONFIGFILE}  2>/dev/null
 		rm $IMAGEREPO/index.html  2>/dev/null
+		sed -i "/WEBSERVERPORT/d" ${YAKKODEFAULTS}
 		systemctl restart httpd
 	}
 }
@@ -2269,9 +2405,9 @@ process-stage-changefirewall() {
 				firewall-cmd --add-port=80/tcp --permanent
 				firewall-cmd --zone=libvirt --add-port=80/tcp --permanent
 
-				echo "Changing firewall port for HTTP - 8080/tcp access"
-				firewall-cmd --add-port=8080/tcp --permanent
-				firewall-cmd --zone=libvirt --add-port=8080/tcp --permanent
+				echo "Changing firewall port for HTTP - ${WEBSERVERPORT}/tcp access"
+				firewall-cmd --add-port=${WEBSERVERPORT}/tcp --permanent
+				firewall-cmd --zone=libvirt --add-port=${WEBSERVERPORT}/tcp --permanent
 
 				echo "Changing firewall port for HTTPS 443/tcp access"
 				firewall-cmd --add-port=443/tcp --permanent
@@ -2722,7 +2858,7 @@ process-stage-waitforocpinstalltocomplete() {
 			OCPINSTALLCODE=$?
 			
 			# Stop background "assistants"
-			kill -s SIGQUIT $CSRAPPROVALPID $PROMETHEUSPID >  /dev/null 2>&1
+			kill -s SIGQUIT $CSRAPPROVALPID $PROMETHEUSPID > /dev/null 2>&1
 			sleep 15
 
 			echo
@@ -2731,15 +2867,24 @@ process-stage-waitforocpinstalltocomplete() {
 			print-in-green  FINISHED OCP INSTALLATION - $(date)
 			print-time-elapsed
 			
-		
+			# We write the first time we believe the cluster was up, for reference
+			# It also let's us know that there is no further building possible
+
+			# This will print the date like 15-06-2021@10:45:46
+			CLUSTERCOMPLETE="\"exitcode ${OCPINSTALLCODE} date $(date +"%d-%b-%Y@%T")\"" 
+			echo "CLUSTERCOMPLETE=$CLUSTERCOMPLETE" >> ${CLUSTERCONFIGFILE}
+
 			if [ $OCPINSTALLCODE -ne 0 ]
 			then
 				echo 
 				echo The OCP Installer exited with code [ $OCPINSTALLCODE ]
 				echo Cluster has $(${OCPINSTALLSOURCE}/oc get nodes | egrep "worker|master" | wc -l) nodes and $(${OCPINSTALLSOURCE}/oc get co | awk '{ print $3 }' | grep True | wc -l) operators up 
 			else
+				compose-html-cluster-report
+
 				echo
 				print-in-green "IMPORTANT:"
+				print-in-green " - you can bookmark cluster info at http://${HTMLREPORTHOST}:${WEBSERVERPORT}"
 				print-in-green " - you DO NOT have a registry -> yakko ops localregistry"
 				print-in-green " - you cannot access the cluster from another computer -> yakko infra openaccess"
 				print-in-green " - you have no user DB-> yakko ops htpasswd administrator &  yakko ops useradd <user>"
@@ -2762,23 +2907,14 @@ process-stage-waitforocpinstalltocomplete() {
 	
 					} > ${LASTBUILDCONFIG}
 				fi
+
 			fi
 
-			# We write the first time we believe the cluster was up, for reference
-			# It also let's us know that there is no further building possible
-
-			# This is my tab keeper, starting on 24/11/2020
-			# to keep track of how many clusters I've built on my big box
-			YAKKOHOSTNAME=$(hostname) 
-			if [ "${YAKKOHOSTNAME}" == "terminus" -o "${YAKKOHOSTNAME}" == "trantor"  ]
-			then
+			# This is my tally, started on 24/11/2020 to keep count of build clusters
+			[ "$(hostname)" == "terminus" -o "$(hostname)" == "trantor"  ] &&
 				echo "Cluster [${CLUSTERNAME}] built on [$(date)] - Masters: ${MASTERNODECOUNT} Workers: ${WORKERNODECOUNT}" >> /YAKKO-TALLY-${YAKKOHOSTNAME}
-			fi
+
 			echo
-
-			# This will print the date like 15-06-2021@10:45:46
-			echo CLUSTERCOMPLETE=\"exitcode ${OCPINSTALLCODE} date $(date +"%d-%b-%Y@%T")\" >> ${CLUSTERCONFIGFILE}
-
 			check-cluster-state 1
 		}
 	}
@@ -3302,13 +3438,12 @@ process-stage-gatherclusterconfiguration() {
 		CLUSTERAPIURL="https://api.${CLUSTERFQDN}:6443"
 		CLUSTERPROXY="${BASENETWORK}.${PROXYADDRESS}"
                 WEBSERVERIP=${CLUSTERPROXY}
-                WEBSERVERPORT=8080
 		OCPSSHKEY=~/.ssh/id_rsa_ocp.${CLUSTERNAME}
 		DNSMASQCONFIGFILE=/etc/NetworkManager/dnsmasq.d/dnsmasq-${YAKKONAME}-${CLUSTERNAME}.conf
 		HAPROXYCONFIGFILE=/etc/haproxy/${YAKKONAME}/${CLUSTERNAME}.cfg
 
 		# We calculate the BASEMACADDRESS last digit here...
-		# This in case there is more than one cluster defined!
+		# This in case there is more than one cluster defined... Maybe...
 		BASEMACADDRESS=${COREMACADDRESS}:$(echo ${BASENETWORK} | cut -f3 -d. | xargs printf '%x')
 
 		populate-yakkodefaults
@@ -3516,6 +3651,21 @@ then
 
 else
 	source ${CLUSTERCONFIGFILE} # Load config variables that this script accumulates
+
+	# Check the cluster yakko version vs the script yakko version
+	if [ "$CLUSTERVERSION" != "$YAKKOVERSION" ]
+	then
+		echo
+		echo "ALERT: This cluster was built using YAKKO version $CLUSTERVERSION."
+		echo "       You are using a different YAKKO version - $YAKKOVERSION."
+		echo
+		echo "VISIT: https://github.com/ozchamo/YAKKO"
+		echo
+		print-in-green  "<Press any key to continue>"
+		read CONTINUE
+		echo
+	fi
+
 
 	# OK - the user wants to complete back out
 	if [ "${YAKKOCALLOPTION}" == infra -a "$2" == deletecluster ]

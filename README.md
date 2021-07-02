@@ -1,6 +1,8 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
+## CURRENT VERSION: 1.00
+But don't be scared, this has been long in the making. It's just a number really...
 
 ## INTRODUCTION
 If you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
