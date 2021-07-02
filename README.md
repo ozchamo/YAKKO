@@ -1,7 +1,7 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 1.00
+## CURRENT VERSION: 1.00  (02-Jul-2021)
 But don't be scared, this has been long in the making. It's just a number really...
 
 ## INTRODUCTION
@@ -51,7 +51,7 @@ A single PC/server with:
 Tested combinations to date:
 - RHEL 8.2, 8.3, 8.4 
 - Fedora 32, 33, 34
-- OpenShift 4.3, 4.5, 4.6, 4.7 and... 4.8 rc0 (And... some nightlies)
+- OpenShift 4.3, 4.5, 4.6, 4.7 and... 4.8 rc1 (And... some nightlies)
 
 The testbed used to build and run 'yakko' is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes.
     
