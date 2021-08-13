@@ -1,8 +1,8 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 1.00  (02-Jul-2021)
-But don't be scared, this has been long in the making. It's just a number really...
+## CURRENT VERSION: 2.0  (14-Aug-2021)
+Support for OCP 4.8 and single node clusters, 'openaccess' is default, and a major cleanup with small improvements!
 
 ## INTRODUCTION
 If you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
@@ -18,7 +18,7 @@ Why would you want to run your own (single-box) cluster, isn't that self defeati
 - You can test your more complex apps on multiple worker nodes 'for real' 
 - You might be a a fan of "Self hosting"
 - OCP Pull Secret from Red Hat have a lifetime of 60 days, so re-installing is kinda useful
-- LEARN LEARN LEARN!
+- LEARN without Fear or Consequences!
 
 In a nutshell, what does yakko do? 
 - sets up and installs any and all requirements/dependencies for you
@@ -40,40 +40,42 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 Access to the internet!
 
 A single PC/server with:
-- RHEL 8 or Fedora 32/33/34 as the base, installed operating system
+- RHEL or Fedora as the base installed operating system ("Server with GUI" and then YAKKO gives you a working cluster)
+- A fixed IP address to your network
+- 24GB+ RAM for a single node cluster (easily)
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
-- Multi-node clusters on 48GB/64GB (3 masters + many workers) with plenty RAM to spare
+- 48GB+ for multi-node clusters (3 masters + many workers) with plenty RAM to spare
 - 2.5GB of disk space for the install files (yakko will accumulate older OCP versions so keep an eye on the "images" directory within /YAKKO)
 - SSD class storage, spinning disk has never been tested:
-    - 3 masters required 60GB (20GB each)
-    - worker nodes require 20GB each
+    - 3 masters required 60GB (30GB each)
+    - worker nodes require 30GB each
+    - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE
 
-Tested combinations to date:
-- RHEL 8.2, 8.3, 8.4 
-- Fedora 32, 33, 34
-- OpenShift 4.3, 4.5, 4.6, 4.7 and... 4.8 rc1 (And... some nightlies)
+Tested combinations to date with this release:
+- RHEL 8.4 
+- Fedora 34
+- OpenShift 4.7 and 4.8 
 
-The testbed used to build and run 'yakko' is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes.
+The testbed used to build and test 'yakko' is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes.
     
 ## NICE TO HAVES
 - Project cockpit is a good (though hungry) friend
 - Linux skills - if you are even attempting at using this, you must have some already!
-- Your own DNS server that can handle wildcards (but YAKKO can otherwise assist)
+- Your own DNS server that can handle wildcards (but YAKKO assists)
 
 ## HOW TO - INSTALL or "DAY 1"
 #### [[Watch (an earlier vesion of) YAKKO in action building OpenShift]](https://youtu.be/hLsUp7dwxdQ)
 1) Get the 'yakko' script as user "root": 
     - You can clone the repo (ideally on /) OR  
     - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
-2) run "yakko" (always!) as root - e.g. `[root@ocphost YAKKO]# ~/Downloads/yakko`
-3) **the script will copy itself to /YAKKO** - if it's not already there based on what you did in step (1) - and ask you to re-run from there
-4) and... you must ALWAYS run yakko from within /YAKKO. Do not run it elsewhere, it won't work "for now"
-5) 'yakko' will start the install process when there is no cluster defined, so no further parameters are necessary
-6) follow instructions, my suggestion is that you run it manually until you get the hang of it
-7) once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week, and since keeping a tally, 70+ clusters...
-8) depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 30-50 minutes
-9) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
-10) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
+2) Run "yakko" as root (always!) - e.g. `[root@ocphost YAKKO]# ~/Downloads/yakko`
+3) Choose a destination home directory for yakko **usually /YAKKO** - you will be asked to re-run from there
+4) 'yakko' will start the OpenShift install process when there is no cluster defined, so no further parameters are necessary
+5) Follow instructions, my suggestion is that you run it manually until you get the hang of it
+6) Once you get the flow, it can build the cluster AUTOMATICALLY. I've built many in one week, and since keeping a tally, 200+ clusters...
+7) Depending on your hardware (mine's OK, not overfully powerful) you can have a cluster up and running in 25-50 minutes
+8) Until there is no operational cluster, "yakko" will keep asking you to continue the install from where you left off
+9) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
 
 ```
 __________________________________________________________________________
@@ -81,18 +83,20 @@ __________________________________________________________________________
  YAKKO: Yet Another KVM Konfigurator for Openshift
 __________________________________________________________________________
 
- CLUSTER: myopenshiftcluster.localdomain   (Built: 25-Jun-2021@18:39:06)
+ CLUSTER: prod.pichus.net  (Ver: 4.7.19  Built: 20-Jul-2021@01:15:57)
 
  Active Masters:   3/3
- Active Nodes:     0/0 (workers/infra)
-
+ Active Nodes:     2/2 (workers/infra)
  Active Operators: 31/31
 
-             state      
+              state      
  Web Console: [ ✔ ]  https://console-openshift-console.apps.myopenshiftcluster.localdomain
  API Server:  [ ✔ ]  https://api.myopenshiftcluster.localdomain:6443
 
- Administrator: super  (Password not available for display)
+ Administrator: kubeadmin
+ Password:      M9jhk-znNif-UCiCE-NMwII
+
+ External access: ENABLED (to change: yakko infra changeaccess)
 
  - To use OpenShift's 'oc' command --> source ocp-setup-env  (in this shell)
  - To make infrastructure changes ---> yakko infra <options>
@@ -111,14 +115,15 @@ These are called through passing a parameter to YAKKO, either "infra" or "ops".
 ```
 USAGE: yakko infra <OPTION> [parameters]  
 OPTION is one of:  
-    - startcluster  -> start up an existing cluster  
-    - stopcluster   -> shutdown an existing cluster  
-    - addnode       -> grow the cluster compute capacity by adding a new compute/infra node  
-    - deletenode    -> remove a running node from the cluster  
-    - nodelogs      -> display the logs of a particular node  
-    - sshtonode     -> provide terminal access to an individual cluster node  
-    - openaccess    -> enable OpenShift access by other clients in your network  
-    - deletecluster -> delete entire cluster and all infrastructure  
+    - startcluster    ->  Start up an existing cluster  
+    - stopcluster     ->  Shutdown an existing cluster  
+    - addnode         ->  Grow the cluster compute capacity by adding a new compute/infra node  
+    - deletenode      ->  Remove a running node from the cluster  
+    - nodelogs        ->  Display the logs of a particular node  
+    - sshtonode       ->  Provide terminal access to an individual cluster node  
+    - changeaccess    ->  Enable/disable OpenShift access by other clients in your network  
+    - restartservices ->  Restart supporting services for cluster (virt network/HAproxy/libvirtd)
+    - deletecluster   ->  Delete entire cluster and all infrastructure  
 ```
 "yakko ops" relates to the higher level kubernetes/OCP stuff that makes life more easy going:
 `[root@ocphost YAKKO]# ./yakko ops`
@@ -126,14 +131,15 @@ OPTION is one of:
 ```
 USAGE: yakko ops <OPTION> [parameters]  
 OPTION is one of:  
-    - htpasswd      -> deploy local password access and a new administrator  
-    - useradd       -> add a new user to local password DB  
-    - userdelete    -> delete an existing user from the local password DB  
-    - mastersched   -> enable/disable master scheduling  
-    - nodelabel     -> Change the label of a node between worker <-> infra  
-    - localregistry -> enable a local registry so you can actually use the cluster  
-    - ingresscert   -> install an existing wildcard certificate
-    - yakkotest     -> deploy the 'yakkotest' app on your cluster, to test the lot!!  
+    - htpasswd        ->  Deploy local password access and a new administrator  
+    - useradd         ->  Add a new user to local password DB  
+    - userdelete      ->  Delete an existing user from the local password DB  
+    - mastersched     ->  Enable/disable master scheduling  
+    - nodelabel       ->  Change the label of a node between worker <-> infra  
+    - localregistry   ->  Enable a local registry so you can actually use the cluster  
+    - ingresscert     ->  Install an existing wildcard certificate
+    - approvecsrs     ->  Approve any outstanding CSRs (Certificate Signing Requests)
+    - yakkotest       ->  Deploy the 'yakkotest' app on your cluster, to test the lot!!  
 ```
 
 Oh, and one final little back door, when you are recreating the same cluster often, you can run, no questions asked: 
@@ -150,8 +156,8 @@ Short of this being a backlog...
 ## COMMITMENT and ACKNOWLEDGEMENTS
 - I hereby pledge to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 - I was inspired in automating this after reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! 
-It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. Thanks ;)
-But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. This is it!
+It was "short" and after typing in all the looooong host kernel parameters I decided that this was worth investing time into. 
+But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. 
 - I needed a COVID confinement project. This is it!
 
 ## QUESTIONS YOU MAY HAVE, FOR FUN
@@ -163,7 +169,7 @@ I want to cook that too. I have two boxes, Large and medium. My dream is to turn
 See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  
 - Is it AUTOMATIC?
 Yes, after you master the basics. Who doesn't want to rebuild OCP all the time?
-- Lots of stuff I haven't though off, so leave your comments!
+- Lots of stuff I haven't thought off, so leave your comments!
 
 ## MY OWN EXPERIENCE AND FINAL WORDS
 - YAKKO is a big undertaking. It began as an exercise in curiosity and developed into a fledgling almost-product
