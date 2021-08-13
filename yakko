@@ -13,7 +13,7 @@
 # Inspirational documentation for this:
 # https://github.com/eitchugo/openshift-libvirt/blob/master/OpenShift_4_libvirt_install_1_master.md
 
-YAKKOVERSION=1.00 # There it is folks
+YAKKOVERSION=1.001 # There it is folks
 
 ##########################################################################
 # BACKLOG:
