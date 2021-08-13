@@ -1,7 +1,7 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 2.0  (14-Aug-2021)
+## CURRENT VERSION: 2.00  (14-Aug-2021)
 Support for OCP 4.8 and single node clusters, 'openaccess' is default, and a major cleanup with small improvements!
 
 ## INTRODUCTION
