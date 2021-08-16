@@ -4138,8 +4138,18 @@ yakko-process-stages() {
 if [ "$1" == "version" ]
 then
 	echo
-	echo "YAKKO version: ${YAKKOVERSION} (${YAKKODATE})"
+	echo "YAKKO version::${YAKKOVERSION} (${YAKKODATE})"
 	echo
+	echo "Copyright (C) 2020 - Daniel Cifuentes"
+    	echo "This program comes with ABSOLUTELY NO WARRANTY."
+    	echo "This is free software, and you are welcome to redistribute it"
+    	echo "under certain conditions" 
+	echo
+	echo "https://github.com/ozchamo/YAKKO"
+	echo
+	echo "You can contact me through GitHub - post a Comment!"
+	echo
+
 	cleanup-and-exit
 fi
 
