@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.00 
-YAKKODATE=20210814.0841
+YAKKOVERSION=2.04 
+YAKKODATE=20210817.0041
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -54,6 +54,7 @@ OCPWGETTMP=/tmp/ocpsetupwget.tmp
 OCPVMDISKDIR=/var/lib/libvirt/images
 CLUSTERDOMAIN=localdomain  
 DHCPXMLTMPFILE=/tmp/yakkodhcpxmlline.tmp
+HTPASSWDFILE=/tmp/ocp-htpasswd
 
 # Cluster build progression variables
 YAKKOSTAGE=0
@@ -62,7 +63,9 @@ YAKKOREBUILD=0
 AUTOSETUP=0 # 1 is Auto, 0 is manual
 YAKKOTEXTCOLOR=brightblue
 DELETECLUSTERMODE=1  # This goes to 0 when we delete the entire cluster with deletecluster
-ADDNODETIMEOUT=600 # If I cannot add a node within 10 minutes, timeout
+DELETECLUSTERFORCE=1
+ADDNODETIMEOUT=600 # If I cannot add a node within 10 minutes, timeout (this multiplied by number of nodes)
+KUBEADMIN=kubeadmin # once deleted this is stored as "" in CLUSTERCONFIGFILE
 
 # Some parameter options
 YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / changeaccess / restartservices / deletecluster "
@@ -824,7 +827,7 @@ approve-csrs-normal() {
 
 	# This runs in the backgound approving certificates as they come...
 	{
-		trap "echo; echo 'CSR Approvals (oc get csr) stopped...'; exit" SIGTERM
+		trap "echo 'Certificate Approval (oc get csr) stopped.'; echo;  exit" SIGTERM
 
 		while [ 1 ] 
 		do
@@ -833,12 +836,13 @@ approve-csrs-normal() {
 			sleep 10
 
 			# Insurance policy should parent die...
-			TIMEOUTANDEXIT=$((${TIMEOUTANDEXIT} - 10))
+			TIMEOUTANDEXIT=$((${TIMEOUTANDEXIT} - 15))
 			[ ${TIMEOUTANDEXIT} -le 0 ] && exit
 		done
 	} &
-
-	return $!
+	
+	# The callers should reference $! to get the PID for the above, so this should be followed by
+	# CSRAPPROVALPID=$!
 }
 
 
@@ -982,14 +986,23 @@ restart-virtual-network() {
 check-oc-credentials() {
 	# We now make sure that the user can 'oc' into the cluster 
 	OCPUSER=$(${OCCOMMAND} whoami 2>/dev/null)
-	check-for-error-and-exit $? "You must be logged in to OpenShift as an administrator to run ${YAKKONAME}"
-
 	echo " system:admin kube:admin ${YAKKOADMIN} " | grep  "${OCPUSER}" >/dev/null 2>&1
 	check-for-error-and-exit $? "You must be logged in to OpenShift as an administrator to run ${YAKKONAME}"
-
-	# note that if we get to this point we have not exited, so we have the right credentials!
 }
 
+
+check-if-yakko-running() {
+
+	# If YAKKO is already running, we block this run. Don't want to clobber an install...
+	# except for the stray timeouts with addnode...
+	MAINYAKKOPID=$BASHPID
+	OTHERYAKKOPID=$(THISYAKKOPID=$BASHPID;ps -C yakko | grep -v "PID\|$MAINYAKKOPID\|$THISYAKKOPID" | awk '{ print $1 }')
+	if [ ! -z "$OTHERYAKKOPID" ]
+	then
+		check-for-error-and-exit 1 "It appears that 'yakko' is already running - see PID [$OTHERYAKKOPID]"
+	fi
+
+}
 
 
 yakko-infra-operations() {
@@ -1070,7 +1083,7 @@ yakko-infra-operations() {
 			ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${NODENAME} sudo shutdown -h 1
 			echo
 		done
-		echo "Check  virsh list --all | grep ${CLUSTERFQDN}  to see if all nodes are shutfown"
+		echo "Check  virsh list --all | grep ${CLUSTERFQDN}  to see if all nodes are shutdown"
 		echo
 	fi
 
@@ -1078,8 +1091,10 @@ yakko-infra-operations() {
 	then
 		#infraaddnode
 		
-
 		print-option-header infra "Add a new worker node to the cluster"
+
+		# We don't want to have two addnodes running
+		check-if-yakko-running
 		
 		check-cluster-state 0 api
 		check-for-error-and-exit $? "Cluster is not fully operational for this operation"
@@ -1171,10 +1186,11 @@ yakko-infra-operations() {
 		fi
 
 		YAKKOSTAGE=0 # This is to artificially use the process-stage framework
-		process-stage-build-ocpworkernodes progress
+		process-stage-build-ocp-workernodes progress
 
+		# This sets CSRAPPROVALPID for later use below
 		approve-csrs-normal ${WORKERNODECOUNT}
-		CSRAPPROVALPID=$?
+		CSRAPPROVALPID=$!
 
 		trap "echo;echo \"Node [${NEWNODENAME}]  has not joined the cluster - deleting...\"; delete-kvm-machine ${NEWNODENAME}; cleanup-and-exit" SIGINT
 
@@ -1187,9 +1203,14 @@ yakko-infra-operations() {
 		echo
 
 		# We'll start the timeout in case this fails - using ADDNODETIMEOUT
-		# NEWNODELIST was populated during process-stage-build-ocpworkernodes
+		# NEWNODELIST was populated during process-stage-build-ocp-workernodes
 
-		CHECKINTERVAL=10
+		CHECKINTERVAL=15
+		ADDNODETIMEOUT=$((${ADDNODETIMEOUT} * ${WORKERNODECOUNT}))
+
+		print-in-colour lightblue  "Waiting up to $(($ADDNODETIMEOUT /60)) minutes to complete the node addition(s)"
+		echo
+
 		while [ ! -z "${NEWNODELIST}" ]
 		do 
 			for EACHNODE in ${NEWNODELIST}
@@ -1206,20 +1227,22 @@ yakko-infra-operations() {
 				# We will timedown the success of this stage - hit 0 and bail out
 				ADDNODETIMEOUT=$((${ADDNODETIMEOUT} - ${CHECKINTERVAL}))
 
-				if [ ${ADDNODETIMEOUT} -lt 0 ]
+				if [ ${ADDNODETIMEOUT} -le 0 ]
 				then
-					# process-stage-build-ocpworkernodes uses NEWNODELIST to know what to roll-back
+					# process-stage-build-ocp-workernodes uses NEWNODELIST to know what to roll-back
 					print-in-colour red  "ERROR: timed out trying to complete node addition to cluster [${CLUSTERNAME}]"
-					process-stage-build-ocpworkernodes rollback
+					process-stage-build-ocp-workernodes rollback
 					NEWNODELIST=""
 					echo
 				fi
 			done
 		done 
 
-		kill -s SIGTERM $CSRAPPROVALPID > /dev/null 2>&1
+		echo "Stopping background certificate approval..."
+		kill -s SIGTERM $CSRAPPROVALPID
+		sleep 1 ${CHECKINTERVAL} # we wait a cycle for the sleep to let go + 1 second
 
-		if [ ${ADDNODETIMEOUT} -lt 0 ]
+		if [ ${ADDNODETIMEOUT} -le 0 ]
 		then
 			print-in-colour red "- Check  'oc get node'  to understand your current cluster configuration"
 			print-in-colour red "- Have you assigned enough RAM to the nodes? You requested ${WORKERRAMSIZE} MiB"
@@ -1547,6 +1570,16 @@ yakko-infra-operations() {
 		print-in-colour red "ALERT: DELETE CLUSTER REQUEST"
 		echo
 
+		if  [ "$1" == "force" ]
+		then
+			# Someone's feeling lucky
+			print-in-colour red "FORCE REQUESTED - NO QUESTIONS ASKED!"
+			DELETECLUSTERMODE=0
+			DELETECLUSTERFORCE=0
+			DELETECLUSTERNAME=${CLUSTERNAME}
+			yakko-process-stages rollback
+		fi
+
 		if  [ "$1" == "${CLUSTERNAME}" ]
 		then
 			echo "You have requested to DELETE the current cluster: [${CLUSTERNAME}]"
@@ -1557,6 +1590,7 @@ yakko-infra-operations() {
 			then
 				# We signal that this is happening in case it's needed to know in rollbacks
 				DELETECLUSTERMODE=0
+				DELETECLUSTERFORCE=1
 				yakko-process-stages rollback
 			else
 				echo
@@ -1602,32 +1636,15 @@ yakko-ops-operations() {
 		cleanup-and-exit
 	fi
 
-	# We check that you can still go on after cred check
-	check-oc-credentials
-
-	if [ "${OPTION}" != "yakkotest" ]
-	then
-		# This cluster is OPERATIONAL (not withstanding the state) 
-		${OCCOMMAND} whoami | grep -e ":admin" -e "${YAKKOADMIN}"  > /dev/null
-		AMIKUBEADMIN=$?
-		if [ ${AMIKUBEADMIN} != 0 ]
-		then
-			echo "ATTENTION: You must be an OpenShift administrator to run ${YAKKONAME}"
-			echo
-			echo "If the kubeadmin user is still available you can login using:"
-			echo "   oc login -u kubeadmin -p $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password) https://api.${CLUSTERFQDN}:6443"
-			echo
-			cleanup-and-exit
-		fi
-	fi
-
-	HTPASSWDFILE=/tmp/ocp-htpasswd
 
 	if [ ${OPTION} == "htpasswd" ]
 	then
 		#opshtpasswd
 
 		print-option-header ops "Enable ADMIN and local passwords"
+
+		# We check that you can still go on after cred check
+		check-oc-credentials
 
 		# Need htpasswd from httpd-tools
 		install-package-if-missing httpd-tools 
@@ -1707,13 +1724,14 @@ yakko-ops-operations() {
 			then
 				echo "Deleting secret for 'kubeadmin' account" 
 				${OCCOMMAND} --user=admin delete secret kubeadmin -n kube-system
-				[ $? -eq 0 ] && echo "YAKKOADMIN=${NEWUSER}" >> ${CLUSTERCONFIGFILE}
+				[ $? -eq 0 ] && echo "KUBEADMIN=''" >> ${CLUSTERCONFIGFILE}
 				echo "Note that the system:admin account is still available"
 
 				# and ... the webpage
 				sed -i "s/kubeadmin/${YAKKOADMIN}/" $IMAGEREPO/index.html
 				sed -i "/Password:/d" $IMAGEREPO/index.html
 				echo
+
 			fi
 	
 		else
@@ -1727,6 +1745,9 @@ yakko-ops-operations() {
 		#opsuseradd
 
 		print-option-header ops "Add a local htpasswd user"
+
+		# We check that you can still go on after cred check
+		check-oc-credentials
 
 		[ "${YAKKOHTPASSWD}" -eq 1 ] 
 		check-for-error-and-exit $? "You need to first configure Local Passwords via \"YAKKONAME enable htpasswd\"" 
@@ -1779,6 +1800,9 @@ yakko-ops-operations() {
 
 		print-option-header ops "Delete a local htpasswd user"
 
+		# We check that you can still go on after cred check
+		check-oc-credentials
+
 		[ "${YAKKOHTPASSWD}" -eq 1 ]
                 check-for-error-and-exit $? "There is no local HTPasswd configured, cannot delete anyone yet!"
 
@@ -1805,6 +1829,9 @@ yakko-ops-operations() {
 		#opslocalregistry
 
 		print-option-header ops "Enable local registry"
+
+		# We check that you can still go on after cred check
+		check-oc-credentials
 
 		ANSWER=N
 		if [ "$1" == "" ]
@@ -1835,6 +1862,9 @@ yakko-ops-operations() {
 		#opsmastersched
 
 		print-option-header ops "Change MASTER node(s) scheduling state"
+
+		# We check that you can still go on after cred check
+		check-oc-credentials
 
 		check-cluster-state 0 api
 
@@ -1882,6 +1912,9 @@ yakko-ops-operations() {
 	then
 		#opsnodelabel
 		# This one is for fun, has a cute little hack
+
+		# We check that you can still go on after cred check
+		check-oc-credentials
 
 		print-option-header ops "Change node label: WORKER ←→ INFRA"
 
@@ -1957,6 +1990,9 @@ yakko-ops-operations() {
 	if [ "${OPTION}" == "ingresscert" ]
 	then
 		#opsingresscert
+
+		# We check that you can still go on after cred check
+		check-oc-credentials
 
 		print-option-header ops "Install an ingress wildcard certificate"
 
@@ -2394,7 +2430,7 @@ process-stage-dns() {
 				ask-user "Confirm that DNSMASQ has been configured and restarted" "Y" noauto
 				echo
 			else
-				echo Configuring dnsmask plugin in NETWORKMANAGER and
+				echo Configuring dnsmask plugin in NetworkManager and
 				echo adding DNSmasq configuration as ${DNSMASQCONFIGFILE}
 				# CHANGE TO END USER SYSTEM HERE
 				cat /etc/NetworkManager/NetworkManager.conf | grep "\[main\]" > /dev/null 2>&1
@@ -2435,15 +2471,16 @@ process-stage-dns() {
 					cat /etc/systemd/resolved.conf | grep "DNS=127.0.0.1" > /dev/null 2>&1
 					[ $? -ne 0 ] && sed -i.${YAKKONAME} "/\[Resolve\]/ a DNS=127.0.0.1" /etc/systemd/resolved.conf
 
+					sleep 1 # This sometimes takes a bit to revive
 					systemctl restart systemd-resolved.service
-					sleep 3 # This sometimes takes a bit to revive
+					sleep 1
+					systemctl restart NetworkManager
 				fi
 			fi
 
-			# Sometimes this needs a jolt.
 			sleep 2
-			systemctl restart libvirtd
-			sleep 2
+			# systemctl restart libvirtd
+			# sleep 5
 
 			echo
 			echo "DNS test - from Virtual Network ${BASENETWORK}.0:"
@@ -3025,10 +3062,11 @@ process-stage-build-bootstrapnode() {
 
                 advance-stage-progression "KVM Bootstrap Host Configuration" && return
 
-		ask-user "Configure OCP bootstrap VM host" "Y" && 
+		ask-user "Configure OCP bootstrap VM host" "Y" && {
 			# Bootstrap node is MAC address is the first to be defined 
 			build-ocp-node bootstrap ${BOOTSTRAPMAC} 2 6000 20 bootstrap.ign
 			check-for-error-and-exit $? "Could not build VM for node [bootstrap]: virt-install error code [$?], check ~/.cache/virt-manager/virt-install.log"
+		}
 	}
 
 	[ $1 == "rollback" ] && {
@@ -3038,7 +3076,7 @@ process-stage-build-bootstrapnode() {
 }
 
 
-process-stage-build-ocpmasternodes() {
+process-stage-build-ocp-masternodes() {
 
 	[ $1 == "progress" ] && {
 
@@ -3072,7 +3110,7 @@ process-stage-build-ocpmasternodes() {
 }
 
 
-process-stage-build-ocpworkernodes() {
+process-stage-build-ocp-workernodes() {
 
 	[ $1 == "progress" ] && {
 
@@ -3125,6 +3163,9 @@ process-stage-build-ocpworkernodes() {
 				echo "Rollback - deleting node [$NODETODELETE]"
 				delete-kvm-machine ${NODETODELETE}
 				sed -i "/${NODETODELETE}/d" /root/.ssh/known_hosts >/dev/null 2>&1
+
+				# And just in case, we tell the cluster that the node is no longer
+				${OCCOMMAND} delete node ${NODETODELETE}
 
 				# Update the virtual network
 				cat ${NETWORKXML} | grep ${NODETODELETE} > ${DHCPXMLTMPFILE} #It's way too hard to pass this as an argument below!
@@ -3275,9 +3316,9 @@ process-stage-reduceprometheusmemory() {
 		
 					sleep 10
 					echo
-					echo "Deleting Prometheus pods for memory reconfiguration"
 					${OCCOMMAND} delete pod prometheus-k8s-0 -n openshift-monitoring > /dev/null 2>&1
 					${OCCOMMAND} delete pod prometheus-k8s-1 -n openshift-monitoring > /dev/null 2>&1
+					echo "Reconfigured  Prometheus for memory footprint reduction"
 		
 				} &
 				PROMETHEUSPID=$!
@@ -3773,8 +3814,7 @@ process-stage-gatherclusterconfiguration() {
 					fi
 				fi
 
-				echo "Changing permissions for [${OCPVMDISKDIR}] and all paths above."
-			       	echo "All members of the tree need to have read/exec access so that user 'qemu' can run VMs in the destination."
+				echo "Changing permissions for [${OCPVMDISKDIR}] and all paths above (qemu:r/w access)."
 
 				cd "${OCPVMDISKDIR}"
 
@@ -4025,7 +4065,7 @@ process-stage-gatherclusterconfiguration() {
 			echo "Although YAKKO automates OpenShift cluster creation, you may want to customise the "
 			echo "'install-config.yaml' configuration file before cluster bootstrap, for example,"
 		        echo "when wanting to add a proxy server for indirect connection to the internet."	
-			ask-user "Pause for edit of 'install-config.yaml' when file becomes available" N 
+			ask-user "Pause for edit of 'install-config.yaml' when file becomes available" N noauto
 			PAUSEFORCONFIGEDIT=$?  #0 is Y, so pause in process-stage-generateocpinstallerconfig
 		fi
 
@@ -4046,8 +4086,9 @@ yakko-process-stages() {
 
 	ACTION=$1 # progress or rollback
 
-	if [ "${ACTION}" == "rollback" ]
+	if [ "${ACTION}" == "rollback" -a ${DELETECLUSTERFORCE} -eq 1 ]
 	then
+		# This questioning is bypassed if DELETECLUSTERFORCE is 0
 		echo
 		ask-user "*** CONFIRM *** - Deleting cluster [${CLUSTERNAME}]" "N" noauto
 		[ $? -ne 0 ] && { echo; echo "ATTENTION: No action taken. Exiting."; cleanup-and-exit; }
@@ -4069,8 +4110,8 @@ yakko-process-stages() {
 	process-stage-generateocpinstallerconfig ${ACTION}
 	process-stage-ingestmanifestsandignition ${ACTION}
 	process-stage-build-bootstrapnode ${ACTION}
-	process-stage-build-ocpmasternodes ${ACTION}
-	process-stage-build-ocpworkernodes ${ACTION}
+	process-stage-build-ocp-masternodes ${ACTION}
+	process-stage-build-ocp-workernodes ${ACTION}
 	process-stage-startocpbootstrap ${ACTION}
 	process-stage-approvecsrs ${ACTION}
 	process-stage-reduceprometheusmemory ${ACTION}
@@ -4094,7 +4135,6 @@ yakko-process-stages() {
 ##########  If this were a different programming language, you would call this a "main()".... ########
 ######################################################################################################
 
-
 if [ "$1" == "version" ]
 then
 	echo
@@ -4110,6 +4150,7 @@ then
 	yakko-backup $*
 fi
 
+# Here comes the colorful YAKKO header!
 clear -x
 print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
 echo
@@ -4201,9 +4242,11 @@ source ${YAKKODEFAULTS} > /dev/null 2>&1
 # if the user passed a parameter, let's capture it here... it could be "infra" or "ops"
 YAKKOCALLOPTION=$1
 
-
 if [ ! -r ${CLUSTERCONFIGFILE} ]
 then
+	# Make sure you don't launch it twice
+	check-if-yakko-running
+
 	if [ ! -z "${YAKKOCALLOPTION}" ] 
 	then
 		# There is no cluster, the only $1 option is to rebuild
@@ -4254,6 +4297,10 @@ else
 	then
 		yakko-infra-operations deletecluster $3
 	fi
+	if [ "${YAKKOCALLOPTION}" == deletecluster  ]
+	then
+		yakko-infra-operations deletecluster $2
+	fi
 
 	# V1.1 - restartservices gets a free pass
 	if [ "${YAKKOCALLOPTION}" == infra -a "$2" == restartservices ]
@@ -4299,7 +4346,6 @@ else
 		then
 			shift # we get rid of "infra"
 			yakko-infra-operations $* # always exits
-			check-cluster-state 1  # yakko is called on an existing cluster - check it! 1 makes it exit
 		fi
 
 		if [ $YAKKOCALLOPTION == "ops" ]

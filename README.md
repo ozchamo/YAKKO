@@ -1,8 +1,8 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 2.00  (14-Aug-2021)
-Support for OCP 4.8 and single node clusters, 'openaccess' is default, and a major cleanup with small improvements!
+## CURRENT VERSION: 2.04  (17-Aug-2021)
+Support for OCP 4.8 and single node/single master clusters (still expereimental with 4.8), 'openaccess' is default, and a major cleanup with small improvements!
 
 ## INTRODUCTION
 If you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
