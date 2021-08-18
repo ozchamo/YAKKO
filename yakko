@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.04 
-YAKKODATE=20210817.0041
+YAKKOVERSION=2.05 
+YAKKODATE=20210819.0952
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -4052,6 +4052,7 @@ process-stage-gatherclusterconfiguration() {
 		# We reload the defaults...
 		source ${YAKKODEFAULTS} > /dev/null 2>&1
 
+		PAUSEFORCONFIGEDIT=1
 		if [ ${YAKKOREBUILD} == 1 ]
 		then
 			AUTOSETUP=1
