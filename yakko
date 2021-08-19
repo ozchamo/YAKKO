@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.05 
-YAKKODATE=20210819.0952
+YAKKOVERSION=2.06 
+YAKKODATE=20210819.1157
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -2500,9 +2500,6 @@ process-stage-dns() {
 			host -t srv _etcd-server-ssl._tcp.${CLUSTERFQDN} ${CLUSTERPROXY}
 			check-for-error-and-exit $? "Could not resolve etcd-server-ssl.${CLUSTERFQDN} on ${BASENETWORK}"
 				
-			echo
-			echo "DNS test - from the host:"
-
 			# Note - before Fedora 33 these tests were run with 127.0.0.1
 			# Then came systemd.resolved.conf and things needed to be "updated"
 			# So now, we need to add to /etc/systemd/resolvd.conf the following
@@ -2510,8 +2507,26 @@ process-stage-dns() {
 			#	Domains=~${CLUSTERDOMAIN}
 			# and... still trying to fix it
  
-			host api.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
-			check-for-error-and-exit $? "Could not resolve api-int.${CLUSTERFQDN} on 127.0.0.1"
+			echo
+			echo "DNS test - from the host (Re/trying first test 5 times)"
+
+			LOOPDNSSUCCESS=1
+                        for LOOPTRY in 1 2 3 4 5
+                        do
+                                sleep 3
+                                host api.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
+                                [ $? -eq 0 ] && {
+					LOOPDNSSUCCESS=0
+				       	break
+				}
+                        done
+
+			if [ ${LOOPDNSSUCCESS} -eq 1 ]
+			then
+				echo "Failed DNS test to api.${CLUSTERFQDN} from host"
+				echo "This is common - just press Y and let YAKKO automatically run to this point again"
+				check-for-error-and-exit 1 "Could not resolve api.${CLUSTERFQDN} on 127.0.0.1"
+			fi
 
 			host etcd-0.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve etcd-0.${CLUSTERFQDN} on 127.0.0.1"
