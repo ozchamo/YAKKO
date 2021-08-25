@@ -13,6 +13,9 @@ YAKKODATE=20210819.1157
 # https://github.com/eitchugo/openshift-libvirt/blob/master/OpenShift_4_libvirt_install_1_master.md
 ###########################################################################
 
+# This will be checked always on install
+TESTEDPLATFORMS="fedora 34 and RHEL 8.4"
+
 ##########################################################################
 # BACKLOG:
 # - use chrony? 
@@ -21,6 +24,7 @@ YAKKODATE=20210819.1157
 #   https://docs.openshift.com/container-platform/4.7/installing/install_config/installing-customizing.html
 # - (COMPLEX) Work on non-virtual network. That may be a project for the next pandemic
 ##########################################################################
+
 
 ######## THESE CAN BE USER CONFIGURABLE FOR FURTHER TESTING.At your own risk.
 MASTERNODECOUNT=3  # Unless instructed otherwise, OCP 4.8+
@@ -4198,6 +4202,16 @@ then
 	while [ 1 ]
 	do
 		# This is not even installed!
+
+		THISPLATFORM="$(cat /etc/os-release | grep '^ID=' | cut -f2 -d=) $(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d=)"
+
+		echo ${TESTEDPLATFORMS} | grep ${THISPLATFORM} > /dev/null 2>&1
+		if [ $? -ne 0 ]
+		then
+			echo "NOTE: This system is using [${THISPLATFORM}], which has not been tested."
+			echo "      This version of YAKKO has only been tested against ${TESTEDPLATFORMS}"
+		fi
+
 		echo
 		echo "YAKKO is not installed in [${CALLINGDIRECTORY}]."
 		echo -n "Enter the directory where you want to install ${YAKKONAME} [/YAKKO]: "
