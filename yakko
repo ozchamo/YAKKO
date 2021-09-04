@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.10 
-YAKKODATE=20210904.1803
+YAKKOVERSION=2.11 
+YAKKODATE=20210904.1810
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -30,7 +30,7 @@ TESTEDPLATFORMS="fedora 34 and RHEL 8.4"
 MASTERNODECOUNT=3  # Unless instructed otherwise, OCP 4.8+
 MASTERVCPUS=4      # Recommended 4
 WORKERVCPUS=2      # Recommended 2
-MASTERDISKSIZE=300  # Disk image size for master, GB
+MASTERDISKSIZE=30  # Disk image size for master, GB
 WORKERDISKSIZE=30  # Disk image size for worker, GB
 MAXNODEVCPUS=4     # Max number of allowable CPUs for a worker node
 MAXWORKERNODES=5   # Max number of worker nodes allowed at cluster BUILD time, after that, no limit 
@@ -3928,13 +3928,6 @@ process-stage-gatherclusterconfiguration() {
 						else
 							if [ $RESPONSE == 1 ]
 							then
-								echo ${OCPGETCLIENTVERSION} | grep 4.8 >/dev/null
-								if [ $? -eq 0 ]
-								then
-									echo "NOTE: Single Master clusters are experimental with OpenShift 4.8"
-									echo "      You will likely see some errors and yet see your cluster progress."
-									echo "      If it does not progress after a while, you may want to restart."
-								fi
 								MASTERNODECOUNT=1
 								break
 							elif [ $RESPONSE == 3 ]
@@ -3946,6 +3939,14 @@ process-stage-gatherclusterconfiguration() {
 							fi
 						fi
 					done
+
+					echo ${OCPGETCLIENTVERSION} | grep 4.8 >/dev/null
+					if [ $? -eq 0 ]
+					then
+						echo "NOTE: Single Master clusters are experimental with OpenShift 4.8"
+						echo "      You will likely see some errors and yet see your cluster progress."
+						echo "      If it does not progress after a while, you may want to restart."
+					fi
 				else	
 					MASTERNODECOUNT=3
 				fi
