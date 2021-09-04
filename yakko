@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.09 
-YAKKODATE=20210826.1638
+YAKKOVERSION=2.10 
+YAKKODATE=20210904.1803
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -30,7 +30,7 @@ TESTEDPLATFORMS="fedora 34 and RHEL 8.4"
 MASTERNODECOUNT=3  # Unless instructed otherwise, OCP 4.8+
 MASTERVCPUS=4      # Recommended 4
 WORKERVCPUS=2      # Recommended 2
-MASTERDISKSIZE=30  # Disk image size for master, GB
+MASTERDISKSIZE=300  # Disk image size for master, GB
 WORKERDISKSIZE=30  # Disk image size for worker, GB
 MAXNODEVCPUS=4     # Max number of allowable CPUs for a worker node
 MAXWORKERNODES=5   # Max number of worker nodes allowed at cluster BUILD time, after that, no limit 
@@ -70,6 +70,7 @@ DELETECLUSTERMODE=1  # This goes to 0 when we delete the entire cluster with del
 DELETECLUSTERFORCE=1
 ADDNODETIMEOUT=600 # If I cannot add a node within 10 minutes, timeout (this multiplied by number of nodes)
 KUBEADMIN=kubeadmin # once deleted this is stored as "" in CLUSTERCONFIGFILE
+PAUSEFORCONFIGEDIT=1
 
 # Some parameter options
 YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / changeaccess / restartservices / deletecluster "
@@ -2054,12 +2055,19 @@ yakko-ops-operations() {
 			echo
 			echo "  3) Follow the instructions above and use the following to test if the DNS challenge is resolving"
 			echo "     before certbot checks the challenge!"
-			echo "     https://dnschecker.org/#TXT/_acme-challenge.apps.test.pichus.net"
+			echo "     https://dnschecker.org/#TXT/_acme-challenge.apps.${CLUSTERFQDN}"
 			echo
 			echo "  NOTE: Visit for help: https://stephennimmo.com/securing-openshift-ingress-with-lets-encrypt/"
+			echo "  NOTE: See here for expired certificates: https://dentrassi.de/2021/01/18/recovering-from-an-expired-openshift-certificate/"
 			echo
 
 			ask-user "Are you ready to proceed?" Y auto
+			if [ $? -ne 0 ]
+			then
+				echo "Exiting. Just run this command again when all requirements are met."
+				echo
+				exit
+			fi
 			echo
 
 			CERTBUNDLEPATH=/etc/letsencrypt/live/apps.${CLUSTERFQDN}
@@ -2218,8 +2226,6 @@ process-stage-libvirt() {
 		#VIRTUALISATION IS MANDATORY THE FIRST TIME WE RUN THIS
 		systemctl status libvirtd --no-pager > /dev/null 2>&1
 		[ $? -ne 0 ] && {
-			cat /proc/cpuinfo | egrep "vmx|svm" >/dev/null 2>&1
-			check-for-error-and-exit $? "Virtualisation extensions are not enabled in this system!"			
 
 			install-package-if-missing libvirt 
 			#install-package-if-missing bridge-utils 
@@ -2227,6 +2233,10 @@ process-stage-libvirt() {
 			install-package-if-missing qemu-kvm
 			install-package-if-missing virt-top
 		}
+
+		cat /proc/cpuinfo | egrep "vmx|svm" >/dev/null 2>&1
+		check-for-error-and-exit $? "Virtualisation extensions are not enabled in this system!"			
+
 		systemctl enable libvirtd --now > /dev/null 2>&1
 		systemctl status libvirtd --no-pager > /dev/null 2>&1
 		check-for-error-and-exit $? "Failed to enable [libvirtd]" 
@@ -2809,6 +2819,7 @@ process-stage-httpserver() {
 			CANDIDATEPORT=${WEBSERVERPORT}
 			while [ 1 ] 
 			do
+				install-package-if-missing lsof
 				lsof -i -P -n | grep LISTEN | grep ":${CANDIDATEPORT} " >/dev/null
 				RESULT1=$?
 				semanage port -l | grep ${CANDIDATEPORT} | grep http >/dev/null 2>&1
@@ -2907,6 +2918,8 @@ process-stage-changefirewall() {
 		then
 			echo "Firewall is not running. Configuration is not required."
 		else
+			install-package-if-missing firewalld # seen strange things in AWS...
+
 			ask-user "Change Firewall rules" "Y" && { 
 
 				echo "Changing firewall port for HTTP apps - 80/tcp access"
@@ -3693,6 +3706,7 @@ process-stage-gatherclusterconfiguration() {
 			OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/latest"
 			OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/latest/latest"
 	
+
 			wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt > /dev/null 2>&1
 			check-for-error-and-exit $? "Failed to download version file for latest OCP - check if https://mirror.openshift.com is reachable" 
 				
@@ -4040,7 +4054,7 @@ process-stage-gatherclusterconfiguration() {
 					echo 
 				fi
 	
-				TOTSYSTEMDISK=$(df -h --block-size=1MiB ${OCPVMDISKDIR} | grep -v Filesystem | awk '{print $4}')
+				TOTSYSTEMDISK=$(df -BGiB ${OCPVMDISKDIR} | grep -v "^Filesystem" | awk '{print $4}' | cut -f1 -dG) 
 				if [ ${TOTSYSTEMDISK} -lt ${TOTCLUSTERDISK} ]
 				then
 					CAPACITYALERT=1
@@ -4094,7 +4108,6 @@ process-stage-gatherclusterconfiguration() {
 		# We reload the defaults...
 		source ${YAKKODEFAULTS} > /dev/null 2>&1
 
-		PAUSEFORCONFIGEDIT=1
 		if [ ${YAKKOREBUILD} == 1 ]
 		then
 			AUTOSETUP=1
@@ -4227,6 +4240,8 @@ then
 		# This is not even installed!
 
 		THISPLATFORM="$(cat /etc/os-release | grep '^ID=' | cut -f2 -d=) $(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d=)"
+
+		install-package-if-missing wget
 
 		echo "${TESTEDPLATFORMS}" | grep "${THISPLATFORM}" > /dev/null 2>&1
 		if [ $? -ne 0 ]

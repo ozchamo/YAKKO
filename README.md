@@ -1,7 +1,7 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 2.09 (20210826.1638)
+## CURRENT VERSION: 2.10 (20210904.1803)
 Support for OCP 4.8 and single node/single master clusters (still experimental with 4.8), 'openaccess' is now default (thus renamed to 'changeaccess'), and a major cleanup with not-so-small other improvements
 
 ## INTRODUCTION
