@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.11 
-YAKKODATE=20210904.1810
+YAKKOVERSION=2.12 
+YAKKODATE=20210929.0921
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -54,11 +54,11 @@ WEBSERVERPORT=8080 # This may have to change
 
 # File and directory variables used throughout
 YAKKONAME=yakko   # In case we want to change the name of the script
-OCPWGETTMP=/tmp/ocpsetupwget.tmp
+OCPWGETTMP=/tmp/ocpsetupwget.$$.tmp
 OCPVMDISKDIR=/var/lib/libvirt/images
 CLUSTERDOMAIN=localdomain  
-DHCPXMLTMPFILE=/tmp/yakkodhcpxmlline.tmp
-HTPASSWDFILE=/tmp/ocp-htpasswd
+DHCPXMLTMPFILE=/tmp/yakkodhcpxmlline.$$.tmp
+HTPASSWDFILE=/tmp/ocp-htpasswd.$$
 
 # Cluster build progression variables
 YAKKOSTAGE=0
@@ -1709,6 +1709,8 @@ yakko-ops-operations() {
 				NEWPASSWORD="$2"
 			fi
 
+			TMPOAUTHCONFIGFILE=/tmp/oauth-config-$$.yaml
+
 			{
 				echo "apiVersion: config.openshift.io/v1"
 				echo "kind: OAuth"
@@ -1722,10 +1724,10 @@ yakko-ops-operations() {
 				echo "    htpasswd:"
 				echo "      fileData:"
 				echo "        name: htpass-secret"
-			} > /tmp/oauth-config.yaml
+			} > ${TMPOAUTHCONFIGFILE}
 
-			${OCCOMMAND} apply -f /tmp/oauth-config.yaml
-			check-for-error-and-exit $? 'Could not apply OAuth Custom Resource for HTaccess (see /tmp/oauth-config.yaml)' 
+			${OCCOMMAND} apply -f ${TMPOAUTHCONFIGFILE}
+			check-for-error-and-exit $? "Could not apply OAuth Custom Resource for HTaccess (see ${TMPOAUTHCONFIGFILE})" 
 
 			htpasswd -c -B -b ${HTPASSWDFILE} $NEWUSER $NEWPASSWORD
 			${OCCOMMAND} create secret generic htpass-secret --from-file=htpasswd=${HTPASSWDFILE} -n openshift-config
@@ -2574,7 +2576,7 @@ process-stage-dns() {
 			host etcd-2.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve etcd-2.${CLUSTERFQDN} on 127.0.0.1"
 
-			host testing.apps.${CLUSTERFQDN} 127.0.0.1
+			host testing.apps.${CLUSTERFQDN} 127.0.0.1 | grep "has address"
 			check-for-error-and-exit $? "Could not resolve testing.apps on 127.0.0.1"
 		}
 	}
