@@ -1,8 +1,8 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 2.12 (20210929.0921)
-Support for OCP 4.8 and single node/single master clusters (still experimental with 4.8), 'openaccess' is now default (thus renamed to 'changeaccess'), and a major cleanup with not-so-small other improvements
+## CURRENT VERSION: 2.20 (20211121.1545)
+Support for OCP 4.9 and single node/single master clusters
 
 ## INTRODUCTION
 If you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
@@ -42,7 +42,7 @@ Access to the internet!
 A single PC/server with:
 - RHEL or Fedora as the base installed operating system ("Server with GUI" and then YAKKO gives you a working cluster)
 - A fixed IP address to your network
-- 24GB+ RAM for a single node cluster (easily)
+- 16GB+ RAM for a single node cluster (but note that your ability to run apps will be impaired, recommended is 32GB. I've succeed with as little as 12GB)
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
 - 48GB+ for multi-node clusters (3 masters + many workers) with plenty RAM to spare
 - 2.5GB of disk space for the install files (yakko will accumulate older OCP versions so keep an eye on the "images" directory within /YAKKO)
@@ -52,9 +52,9 @@ A single PC/server with:
     - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE
 
 Tested combinations to date with this release:
-- RHEL 8.4 
-- Fedora 34
-- OpenShift 4.7 and 4.8 
+- RHEL 8.5 
+- Fedora 35
+- OpenShift 4.9 
 
 The testbed used to build and test 'yakko' is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes.
     
@@ -83,18 +83,18 @@ __________________________________________________________________________
  YAKKO: Yet Another KVM Konfigurator for Openshift
 __________________________________________________________________________
 
- CLUSTER: prod.pichus.net  (Ver: 4.7.19  Built: 20-Jul-2021@01:15:57)
+ CLUSTER: test.home  (Ver: 4.9.7  Built: 20-Nov-2021@22:49:23)
 
- Active Masters:   3/3
+ Active Masters:   1/1
  Active Nodes:     2/2 (workers/infra)
- Active Operators: 31/31
+ Active Operators: 32/32
 
               state      
- Web Console: [ ✔ ]  https://console-openshift-console.apps.myopenshiftcluster.localdomain
- API Server:  [ ✔ ]  https://api.myopenshiftcluster.localdomain:6443
+ Web Console: [ ✔ ]  https://console-openshift-console.apps.test.home
+ API Server:  [ ✔ ]  https://api.test.home:6443
 
  Administrator: kubeadmin
- Password:      M9jhk-znNif-UCiCE-NMwII
+ Password:      M9jhk-znNif-UCiTE-NMwII
 
  External access: ENABLED (to change: yakko infra changeaccess)
 
@@ -149,7 +149,6 @@ Oh, and one final little back door, when you are recreating the same cluster oft
 ## WHAT IS YAKKO MISSING?  (Backlog of sorts?)
 Short of this being a backlog...
 - BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but I am yet to build a business case
-- Setting up Chrony as an "ops" function (though this seems to be covered in 4.7+)
 - Adding nodes from other physical machines and moving virtual nodes around (which may well defeat YAKKO's own purpose)
 - Many 'certainty' principles of higher level systems administration, this said, it tries to keep your firewall on, your SELinux running etc etc.
 
@@ -169,6 +168,8 @@ I want to cook that too. I have two boxes, Large and medium. My dream is to turn
 See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  
 - Is it AUTOMATIC?
 Yes, after you master the basics. Who doesn't want to rebuild OCP all the time?
+- Do you have to really deploy HAProxy on the box? 
+It's more than a convenience. HAProxy bridges the virtual network so that both the OCP host and other hosts on your network can talk to the cluster in the same way and through the 'public' network.
 - Lots of stuff I haven't thought off, so leave your comments!
 
 ## MY OWN EXPERIENCE AND FINAL WORDS
