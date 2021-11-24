@@ -1,7 +1,7 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 2.20 (20211121.1545)
+## CURRENT VERSION: 2.21 (20211124.1526)
 Support for OCP 4.9 and single node/single master clusters
 
 ## INTRODUCTION

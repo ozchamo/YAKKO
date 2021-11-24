@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.20 
-YAKKODATE=20211121.1545
+YAKKOVERSION=2.21 
+YAKKODATE=20211124.1526
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -14,14 +14,10 @@ YAKKODATE=20211121.1545
 ###########################################################################
 
 # This will be checked always on install
-TESTEDPLATFORMS="fedora 34 and RHEL 8.4"
+TESTEDPLATFORMS="fedora 34 and RHEL 8.5"
 
 ##########################################################################
 # BACKLOG:
-# - use chrony? 
-#   20/05/2021 verified that in OCP 4.7, master nodes already have /etc/chrony.conf
-#   configured as indicated in 
-#   https://docs.openshift.com/container-platform/4.7/installing/install_config/installing-customizing.html
 # - (COMPLEX) Work on non-virtual network. That may be a project for the next pandemic
 ##########################################################################
 
@@ -602,13 +598,13 @@ check-cluster-state() {
 	fi
 
 	# If the web console is available, offer info for it regardless of the output above
-	RESULTCONSOLE=1
+	echo -n " Please wait - checking OCP cluster console and API availability..."
 	wget -O $OCPWGETTMP ${CLUSTERWEBURL} --no-check-certificate > /dev/null 2>&1
 	RESULTCONSOLE=$?
-
-	RESULTSERVER=1
 	wget -O $OCPWGETTMP ${CLUSTERAPIURL} > /dev/null 2>&1
 	RESULTSERVER=$?
+	echo -ne "\r\e[0K"
+
 	[ $RESULTSERVER -eq 5 ] && RESULTSERVER=0 # SSL errors doesn't mean it's not up
 
 	[ $RESULTCONSOLE -eq 0 -a $RESULTSERVER -eq 0 ] && OCPACCESSSTATUS=0 # All good
@@ -1021,6 +1017,10 @@ restart-virtual-network() {
 check-oc-credentials() {
 	# We now make sure that the user can 'oc' into the cluster 
 	OCPUSER=$(${OCCOMMAND} whoami 2>/dev/null)
+	if [ $? -ne 0 ]
+	then
+		OCPUSER=unknown
+	fi
 	echo " system:admin kube:admin ${YAKKOADMIN} " | grep  "${OCPUSER}" >/dev/null 2>&1
 	check-for-error-and-exit $? "You must be logged in to OpenShift as an administrator to run ${YAKKONAME}"
 }
@@ -1104,12 +1104,32 @@ yakko-infra-operations() {
 				sleep 1
 			done
 		fi
-		echo "Check:"
+		echo " You can check:"
 		echo "- virsh list --all | grep ${CLUSTERFQDN}  to see if all nodes are running"
 		echo "- oc get nodes  to see if all nodes become Ready"
 		echo "- oc get clusterversion  to check cluster status"
 		echo "- yakko  for a general update"
 		echo
+		echo Nodes are coming up. Waiting for API and User Login services.
+		while [ 1 ]
+		do 
+			wget -O /tmp/wget.$PID.startcluter https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
+			[ $? -eq 5 -o $? -eq 0 ] && break
+			echo -n .
+			sleep 5
+		done
+		while [ 1 ]
+		do 
+			${OCCOMMAND} whoami > /dev/null 2>&1
+			[ $? -eq 0 ] && break
+			echo -n .
+			sleep 5
+		done
+		echo
+		echo "Cluster API endpoint https://${CLUSTERFQDN}:6443 is now available."
+		echo "Web console may take a little longer."
+		echo
+
 	fi
 
 	if [ ${OPTION} == "stopcluster" ]
@@ -2506,13 +2526,18 @@ process-stage-dns() {
 				echo
 			else
 				echo Configuring dnsmask plugin in NetworkManager and
-				echo adding DNSmasq configuration as ${DNSMASQCONFIGFILE}
+				echo Adding DNSmasq configuration as ${DNSMASQCONFIGFILE}
 				# CHANGE TO END USER SYSTEM HERE
 				cat /etc/NetworkManager/NetworkManager.conf | grep "\[main\]" > /dev/null 2>&1
 				[ $? -ne 0 ] && echo '\[main\]' >> /etc/NetworkManager/NetworkManager.conf
 	
 				cat /etc/NetworkManager/NetworkManager.conf | grep "dns = dnsmasq" > /dev/null 2>&1
-				[ $? -ne 0 ] && sed -i.bak '/\[main\]/ a dns = dnsmasq' /etc/NetworkManager/NetworkManager.conf
+				[ $? -ne 0 ] && {
+					CLUSTERCONFIGNOTE="# Added by yakko for OCP cluster ${CLUSTERFQDN}"
+				       	sed -i.bak "/\[main\]/ a ${CLUSTERCONFIGNOTE}" /etc/NetworkManager/NetworkManager.conf
+				       	sed -i.bak "/${CLUSTERCONFIGNOTE}/ a dns = dnsmasq"  /etc/NetworkManager/NetworkManager.conf
+					echo "CLUSTERCONFIGNOTE=\"${CLUSTERCONFIGNOTE}"\" >> ${CLUSTERCONFIGFILE}
+				}
 	
 				# Version 1.2 changed the CLUSTERPROXY references below to YAKKOHOSTIP
 				{
@@ -2541,10 +2566,16 @@ process-stage-dns() {
 
 					#sed -i.EXT is used to edit file in place while creating a backup with extension EXT - we use yakko here
 					cat /etc/systemd/resolved.conf | grep "Domains=~${CLUSTERDOMAIN}" > /dev/null 2>&1
-					[ $? -ne 0 ] && sed -i.${YAKKONAME} "/\[Resolve\]/ a Domains=~${CLUSTERDOMAIN}" /etc/systemd/resolved.conf
+					[ $? -ne 0 ] && {
+					       	sed -i.${YAKKONAME} "/\[Resolve\]/ a ${CLUSTERCONFIGNOTE} DOMAIN" /etc/systemd/resolved.conf
+					       	sed -i.${YAKKONAME} "/${CLUSTERCONFIGNOTE} DOMAIN/ a Domains=~${CLUSTERDOMAIN}" /etc/systemd/resolved.conf
+					}
 
 					cat /etc/systemd/resolved.conf | grep "DNS=127.0.0.1" > /dev/null 2>&1
-					[ $? -ne 0 ] && sed -i.${YAKKONAME} "/\[Resolve\]/ a DNS=127.0.0.1" /etc/systemd/resolved.conf
+					[ $? -ne 0 ] && {
+					       	sed -i.${YAKKONAME} "/\[Resolve\]/ a ${CLUSTERCONFIGNOTE} LOCALHOST" /etc/systemd/resolved.conf
+					       	sed -i.${YAKKONAME} "/${CLUSTERCONFIGNOTE} LOCALHOST/ a DNS=127.0.0.1" /etc/systemd/resolved.conf
+					}
 
 					sleep 1 # This sometimes takes a bit to revive
 					systemctl restart systemd-resolved.service
@@ -2626,8 +2657,11 @@ process-stage-dns() {
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "Deleting DNS configuration and restarting"
 		rm ${DNSMASQCONFIGFILE} > /dev/null 2>&1
-		# mv /etc/systemd/resolved.conf.${YAKKONAME} /etc/systemd/resolved.conf >/dev/null 2>&1
-		echo "Not rolling back resolved.conf changes. Inspect /etc/systemd/resolved.conf if you want to revert."
+		sed -i "/${CLUSTERCONFIGNOTE}/,+1 d" /etc/NetworkManager/NetworkManager.conf
+		sed -i "/${CLUSTERCONFIGNOTE} DOMAIN/,+1 d" /etc/systemd/resolved.conf
+		sed -i "/${CLUSTERCONFIGNOTE} LOCALHOST/,+1 d" /etc/systemd/resolved.conf
+		systemctl restart NetworkManager
+		systemctl restart systemd-resolved
 	}
 }
 
@@ -2745,10 +2779,7 @@ process-stage-haproxy() {
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "Deleting and stopping Load Balancer service"
 		systemctl stop haproxy
-		# We don't want to do this any more - should there be more than one cluster
-		# but we are leaving behind the /etc/haproxy/yakko dir...
-		# instead, we delete the individual haproxy config for the cluster at hand
-		# rm /etc/haproxy/haproxy.cfg > /dev/null 2>&1
+		# We delete the individual haproxy config for the cluster at hand
 		rm ${HAPROXYCONFIGFILE} 2>/dev/null
 	}
 }
@@ -4273,6 +4304,13 @@ then
 	cleanup-and-exit
 fi
 
+if [ $(whoami) != 'root' ]
+then 
+	echo "ATTENTION: You must be user <root> to run ${YAKKONAME}"
+	echo
+	cleanup-and-exit
+fi
+
 if [ "$1" == "backup" ]
 then
 	# This is action 0, the developer wants to make a backup
@@ -4288,31 +4326,16 @@ print-in-colour ${YAKKOTEXTCOLOR} ' YAKKO: Yet Another KVM Konfigurator for Open
 print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
 echo
 
-if [ $(whoami) != 'root' ]
-then 
-	echo "ATTENTION: You must be user <root> to run ${YAKKONAME}"
-	echo
-	cleanup-and-exit
-fi
-
 CALLINGDIRECTORY=$(dirname $(realpath $0))
 
 if [ ! -e "${CALLINGDIRECTORY}/.yakkohome" ]
 then
 	while [ 1 ]
 	do
+
 		# This is not even installed!
 
-		THISPLATFORM="$(cat /etc/os-release | grep '^ID=' | cut -f2 -d=) $(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d=)"
-
 		install-package-if-missing wget
-
-		echo "${TESTEDPLATFORMS}" | grep "${THISPLATFORM}" > /dev/null 2>&1
-		if [ $? -ne 0 ]
-		then
-			echo "NOTE: This system is using [${THISPLATFORM}], which has not been tested."
-			echo "      This version of YAKKO has only been tested against ${TESTEDPLATFORMS}"
-		fi
 
 		echo
 		echo "YAKKO is not installed in [${CALLINGDIRECTORY}]."
@@ -4413,6 +4436,15 @@ then
 
 	fi
 
+	THISPLATFORM="$(cat /etc/os-release | grep '^ID=' | cut -f2 -d=) $(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d=)"
+
+	echo "${TESTEDPLATFORMS}" | grep "${THISPLATFORM}" > /dev/null 2>&1
+	if [ $? -ne 0 ]
+	then
+		echo "NOTE: This system is using [${THISPLATFORM}], which has not been tested."
+		echo "      This version of YAKKO has only been tested against ${TESTEDPLATFORMS}"
+	fi
+
 	process-stage-gatherclusterconfiguration progress
 	yakko-process-stages progress
 
@@ -4433,7 +4465,6 @@ else
 		read CONTINUE
 		echo
 	fi
-
 
 	# OK - the user wants to complete back out
 	if [ "${YAKKOCALLOPTION}" == infra -a "$2" == deletecluster ]
@@ -4482,6 +4513,7 @@ else
 
 		if [ $# -eq 0 ] # parameters go here when there is a cluster - see above and (backup: for developers)
 		then
+			check-oc-credentials
 			check-cluster-state 1  # yakko is called on an existing cluster - check it!
 		fi
 
