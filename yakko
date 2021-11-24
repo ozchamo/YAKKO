@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.21 
-YAKKODATE=20211124.1526
+YAKKOVERSION=2.22 
+YAKKODATE=20211124.1637
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -14,7 +14,7 @@ YAKKODATE=20211124.1526
 ###########################################################################
 
 # This will be checked always on install
-TESTEDPLATFORMS="fedora 34 and RHEL 8.5"
+TESTEDPLATFORMS="fedora 35 and RHEL 8.5"
 
 ##########################################################################
 # BACKLOG:
@@ -4322,7 +4322,7 @@ fi
 clear -x
 print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
 echo
-print-in-colour ${YAKKOTEXTCOLOR} ' YAKKO: Yet Another KVM Konfigurator for Openshift'
+print-in-colour ${YAKKOTEXTCOLOR} " YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. ${YAKKOVERSION})"
 print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
 echo
 
