@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=2.22 
-YAKKODATE=20211124.1637
+YAKKOVERSION=3.00 
+YAKKODATE=20211221.1706
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -14,7 +14,7 @@ YAKKODATE=20211124.1637
 ###########################################################################
 
 # This will be checked always on install
-TESTEDPLATFORMS="fedora 35 and RHEL 8.5"
+TESTEDPLATFORMS="fedora 35 and rhel 8.5"
 
 ##########################################################################
 # BACKLOG:
@@ -30,14 +30,16 @@ MASTERDISKSIZE=30  # Disk image size for master, GB
 WORKERDISKSIZE=20  # Disk image size for worker, GB
 MAXNODEVCPUS=4     # Max number of allowable CPUs for a worker node
 MAXWORKERNODES=5   # Max number of worker nodes allowed at cluster BUILD time, after that, no limit 
-REDUCEPROMETHEUS=Y # Prometheus pod RAM can be reduced, which makes sense, change to N if not desired. 
+REDUCEPROMETHEUS=N # Prometheus pod RAM can be reduced, which makes sense, change to N if not desired. 
                    # You can change this with MANUAL build too.
  
 ######### THESE CAN BE CHANGED INTERACTIVELY #############################
+# OpenShift 4.9: https://docs.openshift.com/container-platform/4.9/installing/installing_bare_metal/installing-bare-metal.html
 SINGLEMASTERRAMSIZE=32000 # Recommended 8192. 6000 not enough
+# OpenShift 4.9: https://docs.openshift.com/container-platform/4.9/installing/installing_sno/install-sno-preparing-to-install-sno.html
 THREEMASTERRAMSIZE=16000 # Recommended 8192. 6000 not enough
-WORKERRAMSIZE=3500 # Recommended ... 2048!? Worked well with 5Gi. Use as 8 to do some real work
-MINWORKERRAMSIZE=3500 # This boundary has been changing as OCP revs up!
+WORKERRAMSIZE=8000 # Recommended ... 2048!? Worked well with 5Gi. Use as 8 to do some real work
+MINWORKERRAMSIZE=4000 # This boundary has been changing as OCP revs up!
 ##########################################################################
 
 # The BASEMACADDRESS is missing the last two entries/hexes. The second to last is calculated on
@@ -46,7 +48,6 @@ MINWORKERRAMSIZE=3500 # This boundary has been changing as OCP revs up!
 # this number as 52:54:00:4a:66 but now the last hex number will be the 3 network digit i.e. 140 which is "8c"
 COREMACADDRESS="52:54:00:4a"
 PROXYADDRESS=1  # So that the overall "proxy" to the cluster is BASENETWORK.PROXY e.g. 192.168.140.1
-BASENETWORK="192.168.140"
 WEBSERVERPORT=8080 # This may have to change
 
 # File and directory variables used throughout
@@ -72,8 +73,11 @@ VNCPORT=5905 # We'll leave the firt few ports open for traditional VNC uses
 BOOTSTRAPWAITTIME=120 # Time to wait after bootstrap has finished and we delete the resource
 
 # Some parameter options
-YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / changeaccess / restartservices / deletecluster "
+YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / changeaccess / restartservices / purgedownloads / resizeram / deletecluster "
 YAKKOCLUSTEROPTIONS=" htpasswd / useradd / userdelete / mastersched / nodelabel / localregistry / ingresscert / approvecsrs / yakkotest "
+
+# And some facts...
+SYSTEMPHYSICALRAM=$(free -m | grep Mem:|awk '{ print $2 }')
 
 # Decorations
 SEPARATIONLINE="__________________________________________________________________________"
@@ -99,9 +103,18 @@ populate-clusterconfigfile() {
 		echo "NETWORKADDRESSSLOT=20"
 		echo "NODECOUNT=0"
 		echo "OCPSSHKEY=${OCPSSHKEY}"
-		echo "HAPROXYCONFIGFILE=${HAPROXYCONFIGFILE}"
 		echo "BUILTWITHYAKKOVERSION=${YAKKOVERSION}"
 		echo "VNCPORT=${VNCPORT}"
+		# There two exist in lastclusterconfig too, but resizing will change it here only
+		echo "MASTERRAMSIZE=${MASTERRAMSIZE}"
+		echo "WORKERRAMSIZE=${WORKERRAMSIZE}"
+		echo "#Stub files"
+		echo "YAKKOSTUBFILE_DNSMASQ=${YAKKOSTUBFILE_DNSMASQ}"
+		echo "YAKKOSTUBFILE_NETWORKMANAGER=${YAKKOSTUBFILE_NETWORKMANAGER}"
+		echo "YAKKOSTUBFILE_RESOLVED=${YAKKOSTUBFILE_RESOLVED}"
+		echo "YAKKOSTUBFILE_HAPROXY=${YAKKOSTUBFILE_HAPROXY}"
+		echo "YAKKOSTUBFILE_HTTPD=${YAKKOSTUBFILE_HTTPD}"
+		echo "STUBFILES=${STUBFILES}"
 		
 	} > ${CLUSTERCONFIGFILE}
 
@@ -125,10 +138,8 @@ populate-yakkodefaults() {
 		# NETWORK CONFIGURATION
 		echo "BASEMACADDRESS=${BASEMACADDRESS}"
 		echo "BASENETWORK=${BASENETWORK}"
-		echo "DNSMASQCONFIGFILE=${DNSMASQCONFIGFILE}"
 		echo "YAKKOHOSTIP=${YAKKOHOSTIP}"
 		echo "HAPROXYACCESS=${HAPROXYACCESS}"
-		echo "ENABLEDNSMASQ=${ENABLEDNSMASQ}"
 
 		# This will be used for creating nodes later on so that any new nodes start at $NETWORKADDRESSSLOT
 		# Note that bootstrap and masters have fixed numbers for IP and MAC
@@ -306,7 +317,7 @@ check-haproxy-access()
 	# Returns 0 if external access is ENABLED
 	#         1 if external access is DISABLED
 
-	cat ${HAPROXYCONFIGFILE} | grep "bind :6443" >/dev/null 2>&1
+	cat ${YAKKOSTUBFILE_HAPROXY} | grep "bind :6443" >/dev/null 2>&1
 	if [ $? -eq 0 ]
 	then
 		return 0
@@ -425,12 +436,12 @@ get-node-list() {
 
 	if [ $1 == "all" ]
 	then
-		NODELIST=" $(virsh list --all --name | grep -e "master-" -e "node-" -e "bootstrap") "
+		NODELIST=" $(virsh list --all --name | grep -e "master-" -e "node-" -e "bootstrap" | grep "${CLUSTERFQDN}") "
 	fi
 
 	if [ $1 == "active" ]
 	then
-		NODELIST=" $(virsh list --name | grep -e "master-" -e "node-" -e "bootstrap") "
+		NODELIST=" $(virsh list --name | grep -e "master-" -e "node-" -e "bootstrap" | grep "${CLUSTERFQDN}") "
 	fi
 
 	if [ "$2" == "print" ]
@@ -483,13 +494,14 @@ compose-html-cluster-report() {
 	    		echo "	</Directory>"
 			echo "</VirtualHost>"
 	
-		} >> ${HTTPDCONFIGFILE}
+		} >> ${YAKKOSTUBFILE_HTTPD}
+		cp ${YAKKOSTUBFILE_HTTPD} ${STUBFILES}/httpd.conf
 
 		systemctl restart httpd > /dev/null 2>&1
 		if [ $? -ne 0 ]
 		then
-			# OK, that didn't work for some reasong, so we revert, no biggie
-			sed -i "/WEBSERVER PAGE/,$ d" ${HTTPDCONFIGFILE}
+			# OK, that didn't work for some reason, so we revert, no biggie
+			sed -i "/WEBSERVER PAGE/,$ d" ${YAKKOSTUBFILE_HTTPD}
 			systemctl restart httpd > /dev/null 2>&1
 			HTMLREPORTHOST=${CLUSTERPROXY}
 		else
@@ -497,7 +509,7 @@ compose-html-cluster-report() {
 		fi
 	fi
 
-	cat <<HTMLCONTENT > $IMAGEREPO/index.html
+	cat <<HTMLCONTENT > ${IMAGEREPO}/index.html
 
 <HTML>
 <HEAD>
@@ -541,7 +553,7 @@ HTMLCONTENT
 
 
 check-cluster-state() {
-	# Call: check-cluster-state <0|1> ["api"]
+	# Call: check-cluster-state <0|1> [api|power]
 	# if $1 ==  0 don't print state
 	# if $1 ==  1 print state AND EXIT
 	# if $2 == power just check for the power status of the cluster
@@ -551,6 +563,7 @@ check-cluster-state() {
 	# Valid calls are:
 	# check-cluster-state 1
 	# check-cluster-state 0
+	# check-cluster-state 0 power
 	# check-cluster-state 0 api
 
 	# Return values are
@@ -567,7 +580,7 @@ check-cluster-state() {
 
 	source ${CLUSTERCONFIGFILE}
 
-	MASTERUPCOUNT=$(virsh list --all | grep "master-" | grep "running" | wc -l)
+	MASTERUPCOUNT=$(virsh list | grep "master-" | grep ${CLUSTERFQDN}  | wc -l)
 
 	if [ "${SPECIALQUERY}" == "power"  ]
 	then
@@ -697,6 +710,7 @@ check-cluster-state() {
 			echo " - To use OpenShift's 'oc' command --> source ocp-setup-env  (in this shell)"
 			echo " - To make infrastructure changes ---> ${YAKKONAME} infra <options>"
 			echo " - To make operational changes ------> ${YAKKONAME} ops <options>"
+			echo " - To add a new cluster -------------> ${YAKKONAME} addcluster"
 			echo
 		fi
 
@@ -747,15 +761,10 @@ build-ocp-node() {
 		echo "${HOSTDHCPENTRY}" > ${DHCPXMLTMPFILE} #It's way too hard to pass this as an argument below!
 		restart-virtual-network add-last ip-dhcp-host
 
-		# This was the old way
-		#echo "<host mac=\"${NODEMACADDRESS}\" name=\"${NODEHOSTNAME}.${CLUSTERFQDN}\" ip=\"${BASENETWORK}.${NETWORKADDRESSSLOT}\"/>"  > ${DHCPXMLTMPFILE} #It's way too hard to pass this as an argument below!
-		#virsh net-update ${NETWORKNAME} add-last ip-dhcp-host "${HOSTDHCPENTRY}" --live --config 
-                #check-for-error-and-exit $? "Could not restart the virtual network"
-
 		# Update the HAproxy and restart it
 		echo "Updating and restarting HAproxy"
-		sed -i "/addingressrouternode80/a\    server ${NODEHOSTNAME} ${BASENETWORK}.${NETWORKADDRESSSLOT}:80 check inter 1s"  ${HAPROXYCONFIGFILE}
-		sed -i "/addingressrouternode443/a\    server ${NODEHOSTNAME} ${BASENETWORK}.${NETWORKADDRESSSLOT}:443 check inter 1s" ${HAPROXYCONFIGFILE}
+		sed -i "/addingressrouternode80/a\    server ${NODEHOSTNAME} ${BASENETWORK}.${NETWORKADDRESSSLOT}:80 check inter 1s"  ${YAKKOSTUBFILE_HAPROXY}
+		sed -i "/addingressrouternode443/a\    server ${NODEHOSTNAME} ${BASENETWORK}.${NETWORKADDRESSSLOT}:443 check inter 1s" ${YAKKOSTUBFILE_HAPROXY}
                 systemctl restart haproxy
                 check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
 
@@ -785,7 +794,7 @@ build-ocp-node() {
 	if [ $(echo ${OCPINSTALLVERSION} | cut -c3 ) -gt 5 ]  # We are on OCP 4.6 or higher
 	then
 		virt-install \
-			--memory ${NODERAMSIZE} \
+			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host \
 			--disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -799,7 +808,7 @@ build-ocp-node() {
 		BUILDOCPNODERESULT=$?
 	else
       		virt-install \
-	                --memory ${NODERAMSIZE} \
+			 --memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
 	       	         --vcpus ${NODEVCPUS} \
        		         --cpu host \
        		         --disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -1045,6 +1054,131 @@ check-if-yakko-running() {
 
 }
 
+restore-stubfiles() {
+	[ -r ${STUBFILES}/resolved.conf ] && cp ${STUBFILES}/resolved.conf ${YAKKOSTUBFILE_RESOLVED}
+	cp ${STUBFILES}/dnsmasq.conf ${YAKKOSTUBFILE_DNSMASQ}
+	cp ${STUBFILES}/NetworkManager.conf ${YAKKOSTUBFILE_NETWORKMANAGER}
+	cp ${STUBFILES}/haproxy.cfg ${YAKKOSTUBFILE_HAPROXY}
+	cp ${STUBFILES}/httpd.conf ${YAKKOSTUBFILE_HTTPD}
+}
+
+
+remove-stubfiles() {
+
+	# This routine deletes all current stub files
+
+	rm /etc/NetworkManager/dnsmasq.d/yakko-* >/dev/null 2>&1
+	rm /etc/NetworkManager/conf.d/yakko-* >/dev/null 2>&1
+	rm /etc/systemd/resolved.conf.d/yakko-* >/dev/null 2>&1
+	rm /etc/haproxy/conf.d/yakko-* >/dev/null 2>&1
+	rm /etc/httpd/conf.d/yakko-* >/dev/null 2>&1
+
+	#	echo "Removing {YAKKOSTUBFILE_DNSMASQ}"
+	#	rm ${YAKKOSTUBFILE_DNSMASQ} 2>/dev/null
+	#
+	# 	echo "Removing ${YAKKOSTUBFILE_NETWORKMANAGER}"
+	# 	rm ${YAKKOSTUBFILE_NETWORKMANAGER} 2>/dev/null
+	#
+	#	if [ -r ${YAKKOSTUBFILE_RESOLVED} ]
+	#	then
+	# 		echo "Removing ${YAKKOSTUBFILE_RESOLVED}"
+	# 		rm ${YAKKOSTUBFILE_RESOLVED} 2>/dev/null
+	#	fi
+	#
+	#	echo "Removing ${YAKKOSTUBFILE_HAPROXY}"
+	#	rm ${YAKKOSTUBFILE_HAPROXY} 2>/dev/null
+	#
+	# 	echo "Removing ${YAKKOSTUBFILE_HTTPD}"
+	# 	rm ${YAKKOSTUBFILE_HTTPD} 2>/dev/null
+}
+
+restart-services() {
+
+		echo "Stopping virtual Network..."
+		virsh net-destroy ${NETWORKNAME}
+		sleep 1
+
+		echo "Stopping HAproxy service..."
+		systemctl stop haproxy
+		echo
+		sleep 1
+
+		echo "Restarting libvirtd service..."
+		systemctl restart libvirtd
+		echo
+		sleep 1
+
+		echo "Starting virtual Network..."
+		virsh net-start ${NETWORKNAME}
+		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
+		sleep 1
+
+		echo "Restarting libvirtd service after virtual network restart"
+		systemctl restart libvirtd
+		echo
+		sleep 1
+
+		echo "Starting HAproxy service..."
+		systemctl start haproxy
+		check-for-error-and-exit $? "Could not start HAproxy service"
+		echo
+		sleep 1
+
+		echo "Restarting HTTPD service..."
+		systemctl restart httpd
+		check-for-error-and-exit $? "Could not start HTTPD service"
+		echo
+		sleep 1
+}
+
+purge-downloads() {
+
+	# At this point, CLUSTERCONFIGFILE is not loaded so we do that to avoid deleting the current image
+	[ -r ${CLUSTERCONFIGFILE} ] && source ${CLUSTERCONFIGFILE}
+
+	if [ -z "${OCPINSTALLVERSION}" ]
+	then 
+		VERSIONINUSE="NONE"
+	else 
+		VERSIONINUSE=${OCPINSTALLVERSION}
+	fi
+
+	OCPDOWNLOADS=$(ls -c ${IMAGEREPO} | grep "^[4-5]" | grep -v ${VERSIONINUSE}  2>/dev/null)
+
+	if  [ -z "${OCPDOWNLOADS}" ]
+	then
+		echo "There are no downloaded OCP images available for purging."
+		echo "${OCPINSTALLVERSION} is currently in use and thus cannot be deleted."
+		echo
+	else
+		echo "The following unused images presently reside on disk:" 
+
+		for OCPDOWNLOADIMAGE in ${OCPDOWNLOADS}
+		do
+			echo ${OCPDOWNLOADIMAGE}: $(du -hs ${IMAGEREPO}/${OCPDOWNLOADIMAGE} 2>/dev/null | awk '{ print $1 }')
+		done
+		echo
+
+		ask-user "Delete OCP images listed" Y
+		if [ $? -eq 0 ]
+		then
+			cd ${IMAGEREPO}
+			if [ ${PWD} == ${IMAGEREPO} ]
+			then
+				# The above check is to ENSURE we don't blow up the wrong thing. Past learnings :)
+				for OCPDOWNLOADIMAGE in ${OCPDOWNLOADS}
+				do
+       	                		echo Deleting ${OCPDOWNLOADIMAGE} 
+					rm -rf ${OCPDOWNLOADIMAGE}
+				done
+				echo Done!
+				echo
+			fi
+			cd ..
+		fi
+	fi
+}
+
 
 yakko-infra-operations() {
 
@@ -1072,6 +1206,8 @@ yakko-infra-operations() {
 		echo "    - sshtonode       ->  Provide terminal access to an individual cluster node"
 		echo "    - changeaccess    ->  Enable/disable OpenShift access by other clients in your network"
 		echo "    - restartservices ->  Restart supporting services for cluster (virt network/HAproxy/libvirtd)"
+		echo "    - resizeram       ->  Change the RAM size of a node"
+		echo "    - purgedownloads  ->  Delete all downloaded OCP images on disk"
 		echo "    - deletecluster   ->  Delete entire cluster and all infrastructure"
 		echo
 		cleanup-and-exit
@@ -1083,22 +1219,61 @@ yakko-infra-operations() {
 
 		print-option-header infra "Start cluster [${CLUSTERNAME}]"
 
+		# We remove any services that should not be there
+		remove-stubfiles
+
+		# We copy all the required STUBFILES for this cluster
 		# Sometimes, HA Proxy may not be running...
-		echo "(Re)starting HA Proxy..."
+		echo "Restarting Network services..."
 		echo
+
+		# We'll stop the network - only because if it's up it will throw an error on net-start
+		virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
+		virsh net-start ${NETWORKNAME}
+		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
+		sleep 1
+
+		if [ -f ${STUBFILES}/resolved.conf ]
+		then
+			# We deal with RESOLVED only if the file exists
+			cp ${STUBFILES}/resolved.conf ${YAKKOSTUBFILE_RESOLVED}
+			systemctl restart systemd-resolved
+			check-for-error-and-exit $? "Could not restart systemd/resolved, the cluster cannot function without this."
+			sleep 2
+		fi
+
+		cp ${STUBFILES}/dnsmasq.conf ${YAKKOSTUBFILE_DNSMASQ}
+		cp ${STUBFILES}/NetworkManager.conf ${YAKKOSTUBFILE_NETWORKMANAGER}
+		systemctl restart NetworkManager
+		check-for-error-and-exit $? "Could not restart NetworkManager, the cluster cannot function without this."
+		sleep 2
+
+		cp ${STUBFILES}/haproxy.cfg ${YAKKOSTUBFILE_HAPROXY}
 		systemctl restart haproxy
-		check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
+		check-for-error-and-exit $? "Could not restart HA Proxy, the cluster cannot function without this."
+		sleep 2
+
+		cp ${STUBFILES}/httpd.conf ${YAKKOSTUBFILE_HTTPD}
+		systemctl restart httpd
+		check-for-error-and-exit $? "Could not start httpd, the cluster cannot function without this."
 		
+		# We check physical RAM and establish a boundary for VMs max RAM on boot.
+		# Sorry if you don't like this ;)
+
 		if [ ! -z "$1" ]
 		then
 			# Surely the user knows what he's doing...
 			NODENAME=$1
+			virsh setmaxmem ${NODENAME} ${SYSTEMPHYSICALRAM}M >/dev/null 2>&1
+
        	 		echo "Starting up: ${NODENAME}"
        	 		virsh start ${NODENAME}.${CLUSTERFQDN}
 		else
 			get-node-list all
 			for NODENAME in ${NODELIST}
 			do
+				virsh setmaxmem ${NODENAME} ${SYSTEMPHYSICALRAM}M >/dev/null 2>&1
+
        	 			echo "Starting up: ${NODENAME}"
        	 			virsh start ${NODENAME}
 				sleep 1
@@ -1110,21 +1285,76 @@ yakko-infra-operations() {
 		echo "- oc get clusterversion  to check cluster status"
 		echo "- yakko  for a general update"
 		echo
-		echo Nodes are coming up. Waiting for API and User Login services.
+		echo Nodes are coming up. Waiting up to 10 minutes for API and User Login services.
+
+		TIMER=300 # This is just for the API
 		while [ 1 ]
 		do 
-			wget -O /tmp/wget.$PID.startcluter https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
+			wget -O /tmp/wget.$$.startcluster https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
 			[ $? -eq 5 -o $? -eq 0 ] && break
 			echo -n .
 			sleep 5
+			TIMER=$((TIMER-5))
+			if [ $TIMER -eq 0 ]
+			then
+				echo
+				echo "ERROR: Failed to observe API server running"
+				echo "       Cannot proceed - debug separately!"
+				exit
+			fi
 		done
+		echo
+		echo "API server now available. Waiting for administrator login."
+		sleep 60
+
+		TIMER=300 # if this takes too long it could be CSRs awaiting
+
+		if [ -z "${YAKKOADMIN}" ] 
+		then
+			YAKKOADMIN=kubeadmin
+			ADMINPASSWORD=$(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)
+		else
+			echo "To bring the cluster up, please enter the password for administrative user {${YAKKOADMIN}"
+			read -s ADMINPASSWORD
+		fi
+
 		while [ 1 ]
 		do 
+			oc login --insecure-skip-tls-verify=true -u ${YAKKOADMIN} -p ${ADMINPASSWORD} https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
+
 			${OCCOMMAND} whoami > /dev/null 2>&1
-			[ $? -eq 0 ] && break
+			[ $? -eq 0 ] && {
+				echo
+				echo "Now logged in to OCP as $(${OCCOMMAND} whoami)"
+				break
+			}
+
 			echo -n .
-			sleep 5
+			sleep 10
+
+			TIMER=$((TIMER-10))
+
+			if [ $TIMER -eq 0 ]
+			then
+				PENDINGCSRS=$(${OCCOMMAND} get csr 2>/dev/null | grep Pending | awk '{ print $1 }')
+                        	if [ ! -z "${PENDINGCSRS}" ]
+                        	then
+                               		set $PENDINGCSRS
+					echo
+                               		echo $(tput blink)"ALERT: There are [$#] Pending Certificate Signing Requests (CSRs) that need approval!" $(tput sgr0)
+					echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
+                               		echo
+					exit
+				fi
+				echo
+				echo "Not waiting any longer for administrative login. "
+				echo "You should attempt 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'"
+				echo
+				exit
+                       	 fi
 		done
+		#oc config use-context "${CLUSTERCONTEXT}" 
+
 		echo
 		echo "Cluster API endpoint https://${CLUSTERFQDN}:6443 is now available."
 		echo "Web console may take a little longer."
@@ -1156,6 +1386,38 @@ yakko-infra-operations() {
 		echo
 		echo "All cluster nodes are now powered off."
 		echo
+		echo "Stopping associated network services..."
+		# We copy all the required STUBFILES for this cluster
+		if [ -f ${YAKKOSTUBFILE_RESOLVED} ]
+		then
+			# We deal with RESOLVED only if the file exists
+			cp ${YAKKOSTUBFILE_RESOLVED} ${STUBFILES}/resolved.conf && rm ${YAKKOSTUBFILE_RESOLVED}
+			systemctl restart systemd-resolved
+			[ $? -ne 0 ] && echo "Could not restart systemd/resolved."
+			sleep 2
+		fi
+
+
+		virsh net-destroy ${NETWORKNAME}
+		[ $? -ne 0 ] && echo "Could not stop virtual network ${NETWORKNAME}"
+
+		cp ${YAKKOSTUBFILE_DNSMASQ} ${STUBFILES}/dnsmasq.conf && rm ${YAKKOSTUBFILE_DNSMASQ} 
+		cp ${YAKKOSTUBFILE_NETWORKMANAGER} ${STUBFILES}/NetworkManager.conf && rm ${YAKKOSTUBFILE_NETWORKMANAGER}
+		systemctl restart NetworkManager
+		[ $? -ne 0 ] && echo "Could not restart NetworkManager."
+		sleep 2
+
+		cp ${YAKKOSTUBFILE_HAPROXY} ${STUBFILES}/haproxy.cfg && rm ${YAKKOSTUBFILE_HAPROXY}
+		systemctl stop haproxy
+		[ $? -ne 0 ] && echo "Could not stop HA Proxy."
+		sleep 2
+
+		# This one can be noisy if there is no httpd config file left so we silence it
+		cp ${YAKKOSTUBFILE_HTTPD} ${STUBFILES}/httpd.conf && rm ${YAKKOSTUBFILE_HTTPD}
+		systemctl restart httpd 2>/dev/null
+
+		echo "Network services are off and YAKKO configuration files have been retired until startup."
+		echo
 	fi
 
 	if [ "${OPTION}" == "addnode" ]
@@ -1164,9 +1426,12 @@ yakko-infra-operations() {
 		
 		print-option-header infra "Add a new worker node to the cluster"
 
-		# We don't want to have two addnodes running
+		# We dont want to have two addnodes running
 		check-if-yakko-running
 		
+		check-cluster-state 0 power
+		check-for-error-and-exit $? "Cluster is powered off..."
+
 		check-cluster-state 0 api
 		check-for-error-and-exit $? "Cluster is not fully operational for this operation"
 
@@ -1330,6 +1595,9 @@ yakko-infra-operations() {
 		
 		print-option-header infra "Delete an existing worker node from the cluster"
 
+		check-cluster-state 0 power
+		check-for-error-and-exit $? "Cluster is powered off..."
+		
 		check-cluster-state 0 api
 		check-for-error-and-exit $? "Cluster is not fully operational for this operation"
 
@@ -1410,11 +1678,103 @@ yakko-infra-operations() {
 		#and we update the haproxy
 		echo
 		echo "Updating and restarting HAproxy"
-		sed -i "/${NODENAME}/ d" ${HAPROXYCONFIGFILE}
+		sed -i "/${NODENAME}/ d" ${YAKKOSTUBFILE_HAPROXY}
                 systemctl restart haproxy
                 check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
 		echo
 	fi
+
+
+	if [ "${OPTION}" == "resizeram" ]
+	then
+		#infraresizeram
+
+		print-option-header infra "Resize node RAM"
+	
+		echo "Nodes in cluster [${CLUSTERNAME}] are:"
+		echo "- masters  (you must resize all masters equally)"
+		WORKERLIST=" masters "
+		for EACHWORKER in $(virsh list --all | grep "node-" | grep ${CLUSTERFQDN} | awk '{print $2}')
+		do
+			echo "-" ${EACHWORKER}
+			WORKERLIST=" ${WORKERLIST} ${EACHWORKER} "
+		done
+		echo
+
+		while [ 1 ]
+		do
+			echo -n "Pick a node name to resize RAM (copy/paste): "
+			read NODETORESIZE
+
+			echo ${WORKERLIST} | grep ${NODETORESIZE} > /dev/null 2>&1
+			if [ $? -eq 0 ] 
+			then
+				break
+			else
+				echo "Invalid node, try again."
+			fi
+		done
+		
+		if [ ${NODETORESIZE} == masters ]
+		then
+			NODETORESIZERAM=$(virsh dominfo master-0.${CLUSTERFQDN} | grep Used | awk '{print $3}')
+			NODETORESIZERAM=$((NODETORESIZERAM/1024))
+			echo Master nodes are defined with ${NODETORESIZERAM} MiB 
+		else
+			NODETORESIZERAM=$(virsh dominfo ${NODETORESIZE} | grep Used | awk '{print $3}')
+			NODETORESIZERAM=$((NODETORESIZERAM/1024))
+			echo Node [${NODETORESIZE}] is defined with ${NODETORESIZERAM} MiB
+		fi
+		echo
+
+		while [ 1 ]
+		do
+			echo -n "Enter the new RAM size (MiB) for node ${NODETORESIZE}: "
+			read NEWRAMSIZE
+
+
+			if [ ${NEWRAMSIZE} -lt 2000 -o ${NEWRAMSIZE} -gt 64000 ]
+			then 
+				echo "Invalid RAM size - try your luck between 2000 and 64000 MiB!"
+				echo
+			else	
+				break
+			fi
+		done
+		# virsh setmaxmem takes KiB, so we multiply times 1024
+		NEWRAMSIZE=$((NEWRAMSIZE*1024))
+		echo
+
+		if [ ${NODETORESIZE} == masters ]
+		then
+			echo "Changing VM definition for master-0.${CLUSTERFQDN}" 
+			virsh setmem master-0.${CLUSTERFQDN} ${NEWRAMSIZE}
+			ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -q core@master-0.${CLUSTERFQDN} "sudo systemctl restart kubelet"
+			sleep 20
+
+			if [ ${MASTERNODECOUNT} -eq 3 ]
+			then	
+				echo "Changing VM definition for master-1.${CLUSTERFQDN}" 
+				virsh setmem master-1.${CLUSTERFQDN} ${NEWRAMSIZE}
+				ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -q core@master-0.${CLUSTERFQDN} "sudo systemctl restart kubelet"
+				sleep 20
+
+				echo "Changing VM definition for master-2.${CLUSTERFQDN}" 
+				virsh setmem master-2.${CLUSTERFQDN} ${NEWRAMSIZE}
+				ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -q core@master-0.${CLUSTERFQDN} "sudo systemctl restart kubelet"
+				sleep 20
+			fi
+		else
+			echo "Changing VM definition for ${NODETORESIZE}"
+			virsh setmem ${NODETORESIZE} ${NEWRAMSIZE}
+			ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -q core@${NODETORESIZE} "sudo systemctl restart kubelet"
+			sleep 20
+		fi
+		sleep 1
+		echo "Resizing completed. Check 'oc adm top nodes'!"
+		echo 
+	fi
+
 
 	if [ "${OPTION}" == "nodelogs" ]
 	then
@@ -1484,7 +1844,7 @@ yakko-infra-operations() {
 			echo
 			echo "Enabling \"${OPTION}\" will permit access to your cluster from external clients in "
 		        echo "your network. Disabling restricts access to ONLY the server running the cluster."
-			echo "Open access is achieved by changing the haproxy configuration in ${HAPROXYCONFIGFILE} "
+			echo "Open access is achieved by changing the haproxy configuration in ${YAKKOSTUBFILE_HAPROXY} "
 			echo "and by enabling wildcard DNS in your network configuration to provide access to all "
 			echo "sub-domains created by OpenShift/Kubernetes for projects/namespaces."
 			echo 
@@ -1526,7 +1886,7 @@ yakko-infra-operations() {
 		fi
 
 		echo
-		echo "Changing port access at ${HAPROXYCONFIGFILE}"
+		echo "Changing port access at ${YAKKOSTUBFILE_HAPROXY}"
 
 		PORTLIST="80 443 6443 22623"
 		if [ ${PROXYCHANGESTATUS} == "ENABLED" ]
@@ -1535,27 +1895,27 @@ yakko-infra-operations() {
 			for PORT in $PORTLIST
 			do 
 				echo "Enabling access for port $PORT"
-				sed -i "/    bind ${CLUSTERPROXY}:${PORT}$/c\    bind :${PORT}" ${HAPROXYCONFIGFILE}
+				sed -i "/    bind ${CLUSTERPROXY}:${PORT}$/c\    bind :${PORT}" ${YAKKOSTUBFILE_HAPROXY}
 				sleep 1
 			done
 
 			echo
-			echo "Changing \"/address\"  entries in ${DNSMASQCONFIGFILE}"
+			echo "Changing \"/address\"  entries in ${YAKKOSTUBFILE_DNSMASQ}"
 			#and we change the NetworkManager DNSmasq entry
-			sed -i "/address=\/api.${CLUSTERFQDN}/c\address=\/api.${CLUSTERFQDN}\/${YAKKOHOSTIP}" ${DNSMASQCONFIGFILE}
-			sed -i "/address=\/apps.${CLUSTERFQDN}/c\address=\/apps.${CLUSTERFQDN}\/${YAKKOHOSTIP}" ${DNSMASQCONFIGFILE}
+			sed -i "/address=\/api.${CLUSTERFQDN}/c\address=\/api.${CLUSTERFQDN}\/${YAKKOHOSTIP}" ${YAKKOSTUBFILE_DNSMASQ}
+			sed -i "/address=\/apps.${CLUSTERFQDN}/c\address=\/apps.${CLUSTERFQDN}\/${YAKKOHOSTIP}" ${YAKKOSTUBFILE_DNSMASQ}
 		else
 			# We are going from enabled to disabled 
 			for PORT in $PORTLIST
 			do 
 				echo "Disabling access for port $PORT"
-				sed -i "/    bind :${PORT}$/c\    bind ${CLUSTERPROXY}:${PORT}" ${HAPROXYCONFIGFILE}
+				sed -i "/    bind :${PORT}$/c\    bind ${CLUSTERPROXY}:${PORT}" ${YAKKOSTUBFILE_HAPROXY}
 				sleep 1
 			done
 			echo
-			echo "Changing \"/address\"  entries in ${DNSMASQCONFIGFILE}"
-			sed -i "/address=\/api.${CLUSTERFQDN}/c\address=\/api.${CLUSTERFQDN}\/${CLUSTERPROXY}" ${DNSMASQCONFIGFILE}
-			sed -i "/address=\/apps.${CLUSTERFQDN}/c\address=\/apps.${CLUSTERFQDN}\/${CLUSTERPROXY}" ${DNSMASQCONFIGFILE}
+			echo "Changing \"/address\"  entries in ${YAKKOSTUBFILE_DNSMASQ}"
+			sed -i "/address=\/api.${CLUSTERFQDN}/c\address=\/api.${CLUSTERFQDN}\/${CLUSTERPROXY}" ${YAKKOSTUBFILE_DNSMASQ}
+			sed -i "/address=\/apps.${CLUSTERFQDN}/c\address=\/apps.${CLUSTERFQDN}\/${CLUSTERPROXY}" ${YAKKOSTUBFILE_DNSMASQ}
 		fi
 
 		echo
@@ -1579,10 +1939,10 @@ yakko-infra-operations() {
 
 	if [ ${OPTION} == "restartservices" ]
 	then
+		#infrarestartservices
 
 		print-option-header infra "Restart Services: Virtual Network/HAproxy/libvirtd"
 
-		#infrarestartservices
 		echo "Restarting services can be useful when you are having issues that cascade from"
 		echo "manually manipulating virtual networking, HAproxy and libvirtd services. "
 		echo "These components can also become 'stale' when making changes in SElinux and "
@@ -1598,38 +1958,20 @@ yakko-infra-operations() {
 			echo
 			cleanup-and-exit
 		fi
+		remove-stubfiles
+		restore-stubfiles
+		restart-services 
 
-		echo "Stopping virtual Network..."
-		virsh net-destroy ${NETWORKNAME}
-		sleep 1
-
-		echo "Stopping HAproxy service..."
-		systemctl stop haproxy
-		echo
-		sleep 1
-
-		echo "Restarting libvirtd service..."
-		systemctl restart libvirtd
-		echo
-		sleep 1
-
-		echo "Starting virtual Network..."
-		virsh net-start ${NETWORKNAME}
-		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
-		sleep 1
-
-		echo "Restarting libvirtd service after virtual network restart"
-		systemctl restart libvirtd
-		echo
-		sleep 1
-
-
-		echo "Starting HAproxy service..."
-		systemctl start haproxy
-		check-for-error-and-exit $? "Could not start HAproxy service"
-		echo
-		sleep 1
 	fi
+
+	if [ ${OPTION} == "purgedownloads" ]
+	then
+		#infrapurgedownlaods
+
+		print-option-header infra "Purge all OpenShift images on disk"
+
+		purge-downloads
+	fi 
 
 	if [ ${OPTION} == "deletecluster" ]
 	then
@@ -1801,8 +2143,8 @@ yakko-ops-operations() {
 				echo "Note that the system:admin account is still available"
 
 				# and ... the webpage
-				sed -i "s/kubeadmin/${YAKKOADMIN}/" $IMAGEREPO/index.html
-				sed -i "/Password:/d" $IMAGEREPO/index.html
+				sed -i "s/kubeadmin/${YAKKOADMIN}/" ${IMAGEREPO}/index.html
+				sed -i "/Password:/d" ${IMAGEREPO}/index.html
 				echo
 
 			fi
@@ -2211,6 +2553,7 @@ yakko-ops-operations() {
 					${OCCOMMAND} adm certificate approve ${CSRNAME}
 				done
 			fi
+			echo "CSR approval can cascade for additional CSRs. Be sure to check again."
 		else
 			echo "There are no pending CSRs to approve"
 		fi
@@ -2315,8 +2658,12 @@ process-stage-pullsecret() {
 		if [ -z "${PULLSECRET}" -o ${WANTPULLSECRET} -eq 0 ]
 		then
 			echo "A new pull secret is required."
-		        echo "Please copy/paste pull secret from [ https://cloud.redhat.com/openshift/install/metal/user-provisioned ]:"
+		        echo "Please copy/paste pull secret from [ https://cloud.redhat.com/openshift/install/metal/user-provisioned ] or enter the path of a local file with it:"
 		        read PULLSECRET
+			if [ -f $PULLSECRET ]
+			then
+				PULLSECRET=$(cat $PULLSECRET)
+			fi
 		        echo $PULLSECRET > ${PULLSECRETFILE}
 		else
 			echo "Using saved pull secret"
@@ -2376,12 +2723,6 @@ process-stage-virtualnetwork() {
 			virsh net-undefine ${NETWORKNAME} > /dev/null 2>&1
 			
 			NETWORKTYPE=1 # Query when BRIDGE is supported. Not yet ;)
-			echo Only NAT is supported for now
-			#if [ $NETWORKTYPE != 1 -a $NETWORKTYPE != 2 ]
-			#then
-			#	echo -n 'Should this network be 1.NAT or 2.BRIDGE (1 or 2)? '
-			#	read NETWORKTYPE
-			#fi
 		
 			if [ $NETWORKTYPE == 1 ] # NAT
 			then
@@ -2405,7 +2746,9 @@ process-stage-virtualnetwork() {
 					echo "		</nat>"
 					echo "	</forward>"
 		
-					echo "	<bridge name='virbrocp' stp='on' delay='0'/>"
+					# There's a 14 character limit for the virtual bridge name!
+					#echo "	<bridge name='virbrocp' stp='on' delay='0'/>"
+					echo "  <bridge name='yakko-${CLUSTERNAME:0:8}' stp='on' delay='0'/>"
 		
 					echo "	<domain name='${CLUSTERFQDN}' localOnly='yes'/>"
 					echo "	<dns>"
@@ -2526,28 +2869,47 @@ process-stage-dns() {
 				echo
 			else
 				echo Configuring dnsmask plugin in NetworkManager and
-				echo Adding DNSmasq configuration as ${DNSMASQCONFIGFILE}
+				echo Adding DNSmasq configuration as ${YAKKOSTUBFILE_DNSMASQ}
 				# CHANGE TO END USER SYSTEM HERE
-				cat /etc/NetworkManager/NetworkManager.conf | grep "\[main\]" > /dev/null 2>&1
-				[ $? -ne 0 ] && echo '\[main\]' >> /etc/NetworkManager/NetworkManager.conf
+				# cat /etc/NetworkManager/NetworkManager.conf | grep "\[main\]" > /dev/null 2>&1
+				# [ $? -ne 0 ] && echo '\[main\]' >> /etc/NetworkManager/NetworkManager.conf
 	
-				cat /etc/NetworkManager/NetworkManager.conf | grep "dns = dnsmasq" > /dev/null 2>&1
-				[ $? -ne 0 ] && {
-					CLUSTERCONFIGNOTE="# Added by yakko for OCP cluster ${CLUSTERFQDN}"
-				       	sed -i.bak "/\[main\]/ a ${CLUSTERCONFIGNOTE}" /etc/NetworkManager/NetworkManager.conf
-				       	sed -i.bak "/${CLUSTERCONFIGNOTE}/ a dns = dnsmasq"  /etc/NetworkManager/NetworkManager.conf
-					echo "CLUSTERCONFIGNOTE=\"${CLUSTERCONFIGNOTE}"\" >> ${CLUSTERCONFIGFILE}
-				}
+				# cat /etc/NetworkManager/NetworkManager.conf | grep "dns = dnsmasq" > /dev/null 2>&1
+				# [ $? -ne 0 ] && {
+				# 	CLUSTERCONFIGNOTE="# Added by yakko for OCP cluster ${CLUSTERFQDN}"
+				#        	sed -i.bak "/\[main\]/ a ${CLUSTERCONFIGNOTE}" /etc/NetworkManager/NetworkManager.conf
+				#        	sed -i.bak "/${CLUSTERCONFIGNOTE}/ a dns = dnsmasq"  /etc/NetworkManager/NetworkManager.conf
+				# 	echo "CLUSTERCONFIGNOTE=\"${CLUSTERCONFIGNOTE}"\" >> ${CLUSTERCONFIGFILE}
+				# }
 	
 				# Version 1.2 changed the CLUSTERPROXY references below to YAKKOHOSTIP
-				{
-                                        # Version 1.2 changed the use of CLUSTERPROXY below
-					echo "listen-address=127.0.0.1,${YAKKOHOSTIP}"
-					echo "server=/${CLUSTERFQDN}/${CLUSTERPROXY}"
-					echo "address=/apps.${CLUSTERFQDN}/${YAKKOHOSTIP}"
-                                        echo "address=/api.${CLUSTERFQDN}/${YAKKOHOSTIP}"
-				} > ${DNSMASQCONFIGFILE}
+				# {
+                                #        # Version 1.2 changed the use of CLUSTERPROXY below
+				#	echo "cache-size=300"
+				#	echo "listen-address=127.0.0.1,${YAKKOHOSTIP}"
+				#	echo "server=/${CLUSTERFQDN}/${CLUSTERPROXY}"
+				#	echo "address=/apps.${CLUSTERFQDN}/${YAKKOHOSTIP}"
+                                #        echo "address=/api.${CLUSTERFQDN}/${YAKKOHOSTIP}"
+				#} > ${YAKKOSTUBFILE_DNSMASQ}
 		
+				# New for version 2.2+
+				{
+					echo "[main]"
+					echo "dns = dnsmasq"
+				} > ${YAKKOSTUBFILE_NETWORKMANAGER}
+				cp ${YAKKOSTUBFILE_NETWORKMANAGER} ${STUBFILES}/NetworkManager.conf
+
+                                # Version 1.2 changed the CLUSTERPROXY references below to YAKKOHOSTIP
+                                {
+                                       # Version 1.2 changed the use of CLUSTERPROXY below
+                                       echo "cache-size=300"
+                                       echo "listen-address=127.0.0.1,${YAKKOHOSTIP}"
+                                       echo "server=/${CLUSTERFQDN}/${CLUSTERPROXY}"
+                                       echo "address=/apps.${CLUSTERFQDN}/${YAKKOHOSTIP}"
+                                       echo "address=/api.${CLUSTERFQDN}/${YAKKOHOSTIP}"
+                                } > ${YAKKOSTUBFILE_DNSMASQ}
+				cp ${YAKKOSTUBFILE_DNSMASQ} ${STUBFILES}/dnsmasq.conf
+
 				systemctl restart NetworkManager
 				check-for-error-and-exit $? "Could not restart NetworkManager"
 
@@ -2555,32 +2917,24 @@ process-stage-dns() {
 				cat /etc/resolv.conf | grep "nameserver 127.0.0.53"
 				if [ $? -eq 0 ]
 				then	
-					# CHANGE TO END USER SYSTEM HERE
 
-					# We need to add after [Resolve]
-					# DNS=127.0.0.1
-					# Domains=~${CLUSTERDOMAIN}
-					#to /etc/systemd/resolved.conf
+					# New for version 2.2+
 					echo
-					echo "ATTENTION: This system is using systemd-resolved. YAKKO needs to add a DNS stub in /etc/systemd/resolved.conf"
+					echo "ATTENTION: This system is using systemd-resolved. YAKKO needs to add a DNS stub file in /etc/systemd/resolved.conf.d/"
+					mkdir -p /etc/systemd/resolved.conf.d
+					check-for-error-and-exit $? "Could not create /etc/systemd/resolved.conf.d directory for stub file"
 
-					#sed -i.EXT is used to edit file in place while creating a backup with extension EXT - we use yakko here
-					cat /etc/systemd/resolved.conf | grep "Domains=~${CLUSTERDOMAIN}" > /dev/null 2>&1
-					[ $? -ne 0 ] && {
-					       	sed -i.${YAKKONAME} "/\[Resolve\]/ a ${CLUSTERCONFIGNOTE} DOMAIN" /etc/systemd/resolved.conf
-					       	sed -i.${YAKKONAME} "/${CLUSTERCONFIGNOTE} DOMAIN/ a Domains=~${CLUSTERDOMAIN}" /etc/systemd/resolved.conf
-					}
-
-					cat /etc/systemd/resolved.conf | grep "DNS=127.0.0.1" > /dev/null 2>&1
-					[ $? -ne 0 ] && {
-					       	sed -i.${YAKKONAME} "/\[Resolve\]/ a ${CLUSTERCONFIGNOTE} LOCALHOST" /etc/systemd/resolved.conf
-					       	sed -i.${YAKKONAME} "/${CLUSTERCONFIGNOTE} LOCALHOST/ a DNS=127.0.0.1" /etc/systemd/resolved.conf
-					}
+					{
+						echo "[Resolve]"
+						echo "Domains=~${CLUSTERDOMAIN}"
+						echo "DNS=127.0.0.1"
+					} > ${YAKKOSTUBFILE_RESOLVED}
+					cp ${YAKKOSTUBFILE_RESOLVED} ${STUBFILES}/resolved.conf
 
 					sleep 1 # This sometimes takes a bit to revive
 					systemctl restart systemd-resolved.service
 					sleep 1
-					systemctl restart NetworkManager
+
 				fi
 			fi
 
@@ -2609,13 +2963,6 @@ process-stage-dns() {
 			host -t srv _etcd-server-ssl._tcp.${CLUSTERFQDN} ${CLUSTERPROXY}
 			check-for-error-and-exit $? "Could not resolve etcd-server-ssl.${CLUSTERFQDN} on ${BASENETWORK}"
 				
-			# Note - before Fedora 33 these tests were run with 127.0.0.1
-			# Then came systemd.resolved.conf and things needed to be "updated"
-			# So now, we need to add to /etc/systemd/resolvd.conf the following
-			#	DNS=127.0.0.1
-			#	Domains=~${CLUSTERDOMAIN}
-			# and... still trying to fix it
- 
 			echo
 			echo "DNS test - from the host (Re/trying first test 5 times)"
 
@@ -2656,12 +3003,14 @@ process-stage-dns() {
 
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "Deleting DNS configuration and restarting"
-		rm ${DNSMASQCONFIGFILE} > /dev/null 2>&1
-		sed -i "/${CLUSTERCONFIGNOTE}/,+1 d" /etc/NetworkManager/NetworkManager.conf
-		sed -i "/${CLUSTERCONFIGNOTE} DOMAIN/,+1 d" /etc/systemd/resolved.conf
-		sed -i "/${CLUSTERCONFIGNOTE} LOCALHOST/,+1 d" /etc/systemd/resolved.conf
+		if [ -f "${YAKKOSTUBFILE_RESOLVED}" ]
+		then
+			rm ${YAKKOSTUBFILE_RESOLVED} > /dev/null 2>&1
+			systemctl restart system-resolved
+		fi
+		rm ${YAKKOSTUBFILE_DNSMASQ} > /dev/null 2>&1
+		rm ${YAKKOSTUBFILE_NETWORKMANAGER} > /dev/null 2>&1
 		systemctl restart NetworkManager
-		systemctl restart systemd-resolved
 	}
 }
 
@@ -2692,14 +3041,15 @@ process-stage-haproxy() {
 				fi
 			}
 	
-			#We'll put config files for HAPROXY in here
-			mkdir /etc/haproxy/${YAKKONAME} > /dev/null 2>&1
+			# We defined YAKKOSTUBFILE_HAPROXY during question time - it will reside in the directory below
+			mkdir -p /etc/haproxy/conf.d
 
 			#HAPROXY still wants to find a config file in the default place
 			touch /etc/haproxy/haproxy.cfg
 
 			#but, we can add others, and we do! As a directory, this will make haproxy load any configs in there...
-			echo "OPTIONS=\"-f /etc/haproxy/${YAKKONAME}\"" > /etc/sysconfig/haproxy
+			#this does not get blown away on cluster deletion. Tricky.
+			echo "OPTIONS=\"-f /etc/haproxy/conf.d\"" > /etc/sysconfig/haproxy
 
 			# VERSION 1.1 adds opening by default so here we go
 			# This value came from QUESTIONS and is later stored in yakkodefaults
@@ -2766,7 +3116,8 @@ process-stage-haproxy() {
 					echo "    server master-2.${CLUSTERFQDN} ${MASTER2IP}:443 check inter 1s"
 				}
 				echo "    # addingressrouternode443"
-			} > ${HAPROXYCONFIGFILE}
+			} > ${YAKKOSTUBFILE_HAPROXY}
+			cp ${YAKKOSTUBFILE_HAPROXY} ${STUBFILES}/haproxy.cfg
 
 			setsebool -P haproxy_connect_any 1
 			systemctl --now enable haproxy
@@ -2780,7 +3131,7 @@ process-stage-haproxy() {
 		rollback-stage-progression "Deleting and stopping Load Balancer service"
 		systemctl stop haproxy
 		# We delete the individual haproxy config for the cluster at hand
-		rm ${HAPROXYCONFIGFILE} 2>/dev/null
+		rm ${YAKKOSTUBFILE_HAPROXY} 2>/dev/null
 	}
 }
 
@@ -2811,11 +3162,11 @@ process-stage-downloadocpbinaries() {
 
 			# DOWNLOAD CLIENT STUFF FIRST (as of 4.6 it is common to all versions)
 			wget $OCPDOWNLOADCLIENT/openshift-install-linux.tar.gz -O - | tar xz
-			[ $? -ne 0 ] && { "echo Error downloading *openshift-installer*, exiting..."; cd ..; rm -rf ${OCPGETCLIENTVERSION}; cleanup-and-exit; } 
+			[ $? -ne 0 ] && { echo "Error downloading *openshift-installer*, exiting..."; cd ..; rm -rf ${OCPGETCLIENTVERSION}; cleanup-and-exit; } 
 
 			echo "Getting the OCP client -> $PWD"
 			wget $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz -O - | tar xz 
-			[ $? -ne 0 ] && { "echo Error downloading *openshift-client*, exiting..."; cd ..; rm -rf ${OCPGETCLIENTVERSION}; cleanup-and-exit; } 
+			[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; rm -rf ${OCPGETCLIENTVERSION}; cleanup-and-exit; } 
 		
 			echo "Getting RHCOS installer files... -> $PWD"
 
@@ -2881,7 +3232,6 @@ process-stage-downloadocpbinaries() {
 
 process-stage-httpserver() {
 
-	HTTPDCONFIGFILE=/etc/httpd/conf.d/httpd-${YAKKONAME}-build-${CLUSTERNAME}.conf
 
 	[ $1 == "progress" ] && {
 
@@ -2937,7 +3287,7 @@ process-stage-httpserver() {
 	
 			install-package-if-missing httpd
 
-			echo "<BR><BR><H1>The YAKKO web server is working!</H1>" > $IMAGEREPO/index.html # to have a test file there...
+			echo "<BR><BR><H1>The YAKKO web server is working!</H1>" > ${IMAGEREPO}/index.html # to have a test file there...
 		
 			{
 				echo "Listen ${WEBSERVERIP}:${WEBSERVERPORT}"
@@ -2950,7 +3300,8 @@ process-stage-httpserver() {
 	   	 		echo "	</Directory>"
 				echo "</VirtualHost>"
 		
-			} > ${HTTPDCONFIGFILE}
+			} > ${YAKKOSTUBFILE_HTTPD}
+			cp ${YAKKOSTUBFILE_HTTPD} ${STUBFILES}/httpd.conf
 		
 			# Figure out which of these are required
 			# and needed to survive a reboot...
@@ -2972,7 +3323,7 @@ process-stage-httpserver() {
 
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "Unconfiguring installation webserver - content will remain in place."
-		rm ${HTTPDCONFIGFILE}  2>/dev/null
+		rm ${YAKKOSTUBFILE_HTTPD}  2>/dev/null
 		rm $IMAGEREPO/index.html  2>/dev/null
 		sed -i "/WEBSERVERPORT/d" ${YAKKODEFAULTS}
 		systemctl restart httpd > /dev/null 2>&1
@@ -3308,7 +3659,7 @@ process-stage-build-ocp-workernodes() {
 				#and we update the haproxy
 				echo
 				echo "Updating and restarting HAproxy"
-				sed -i "/${NODETODELETE}/ d" /etc/haproxy/${YAKKONAME}/${CLUSTERNAME}.cfg #> /dev/null 2>&1
+				sed -i "/${NODETODELETE}/ d" ${YAKKOSTUBFILE_HAPROXY} #> /dev/null 2>&1
 				systemctl restart haproxy
 				check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
 			done
@@ -3348,9 +3699,9 @@ process-stage-startocpbootstrap() {
 						(sleep ${BOOTSTRAPWAITTIME} && delete-kvm-machine bootstrap.${CLUSTERFQDN}) &
 
 						# Now we delete the boostrap from the haproxy!!!
-						cat ${HAPROXYCONFIGFILE} | grep -v bootstrap > ${HAPROXYCONFIGFILE}.nobootstrap
-						rm -f ${HAPROXYCONFIGFILE}
-						mv ${HAPROXYCONFIGFILE}.nobootstrap ${HAPROXYCONFIGFILE}
+						cat ${YAKKOSTUBFILE_HAPROXY} | grep -v bootstrap > ${YAKKOSTUBFILE_HAPROXY}.nobootstrap
+						rm -f ${YAKKOSTUBFILE_HAPROXY}
+						mv ${YAKKOSTUBFILE_HAPROXY}.nobootstrap ${YAKKOSTUBFILE_HAPROXY}
 						systemctl restart haproxy
 					fi
 					break
@@ -3521,6 +3872,7 @@ process-stage-waitforocpinstalltocomplete() {
 				# This will print the date like 15-06-2021@10:45:46
 				CLUSTERCOMPLETE="\"exitcode ${OCPINSTALLCODE} date $(date +"%d-%b-%Y@%T")\"" 
 				echo "CLUSTERCOMPLETE=$CLUSTERCOMPLETE" >> ${CLUSTERCONFIGFILE}
+				echo CLUSTERCONTEXT="$(oc whoami -c)" >> ${CLUSTERCONFIGFILE}
 
 				compose-html-cluster-report
 
@@ -3549,7 +3901,6 @@ process-stage-waitforocpinstalltocomplete() {
 	
 					} > ${LASTBUILDCONFIG}
 				fi
-
 
 				# This is my tally, started on 24/11/2020 to keep count of build clusters
 				if [ -r ${YAKKOSETUPDIR}/.tallyhosts ]
@@ -3746,10 +4097,30 @@ process-stage-gatherclusterconfiguration() {
 
 	       		### QUESTION: basenetwork ## Stored in YAKKO defaults
 			print-question-separator
+
+			# We calculate a base network that's unused by looking at how many virtual networks exist.
+			# The user can change it or deal with it ;)
+			# This also takes care of potential duplicates in mac addresses
+
+			BASENETWORK=140
+			while [ 1 ]
+			do
+				for DEFINEDBASENET in $(virsh -q net-list --all | awk '{print $1}')
+		       		do 
+					virsh net-dumpxml $DEFINEDBASENET | grep range | cut -f2 -d= | cut -f2 -d\'
+				done  | grep 192.168.$BASENETWORK > /dev/null 2>&1
+				if [ $? -eq 0 ]
+				then
+					BASENETWORK=$((BASENETWORK+1))
+				else
+					BASENETWORK=192.168.$BASENETWORK
+					break
+				fi
+			done
+
 	       		echo -n "Enter the SUBNET (/24) inside KVM that you want cluster under [\"${BASENETWORK}\"]: "
 	       		read RESPONSE
 	       		[ ! -z "$RESPONSE" ] && BASENETWORK=$(echo $RESPONSE | cut -f1-3 -d.)
-
 
 			### QUESTION: Allow open access to the cluster upon creation  # This is recorded only in yakkodefaults
 			print-question-separator
@@ -3790,10 +4161,11 @@ process-stage-gatherclusterconfiguration() {
 			# This would get you the number for the latest version
 			OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/latest"
 			OCPDOWNLOADIMAGE="$OCPROOT/dependencies/rhcos/latest/latest"
-	
 
+			echo -n "Checking for latest OpenShift version - please wait  "
 			wget -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt > /dev/null 2>&1
 			check-for-error-and-exit $? "Failed to download version file for latest OCP - check if https://mirror.openshift.com is reachable" 
+			echo -ne "\r\e[0K"
 				
 		        OCPGETCLIENTVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 
@@ -4056,6 +4428,11 @@ process-stage-gatherclusterconfiguration() {
 							echo "Error: Not a number. Try again..."
 							continue
 						else
+							if [ ${VALUE} -lt ${RECMASTERRAMSIZE} ]
+							then 
+								ask-user "You are requesting less RAM than recommended. Do you want to limit Promeheus RAM usage" Y
+								[ $? -eq  0 ] && REDUCEPROMETHEUS=Y
+							fi
 							MASTERRAMSIZE=$VALUE
 						fi
 					else
@@ -4129,8 +4506,8 @@ process-stage-gatherclusterconfiguration() {
 				TOTWORKERSDISK=$(($WORKERNODECOUNT * $WORKERDISKSIZE)) # This is in GB
 				TOTCLUSTERDISK=$(($TOTMASTERSDISK + $TOTWORKERSDISK))
 	
-				TOTSYSTEMRAM=$(free -m | grep Mem:|awk '{ print $7 }')
-
+				# We won't use PHYSICAL system RAM here as a warning mark
+				SYSTEMAVAILRAM=$(free -m | grep Mem:| awk '{ print $7 }')
 
 				# QUESTION - not really but we confirm
 				print-question-separator
@@ -4138,12 +4515,12 @@ process-stage-gatherclusterconfiguration() {
 			        echo "- RAM:  ${TOTCLUSTERRAM} MiB "
 				echo "- DISK: ${TOTCLUSTERDISK} GiB "
 
-				if [ ${TOTSYSTEMRAM} -lt ${TOTCLUSTERRAM} ]
+				if [ ${SYSTEMAVAILRAM} -lt ${TOTCLUSTERRAM} ]
 				then
 					CAPACITYALERT=1
 					echo
-					print-in-colour orange "Not enough RAM available for your desired configuration:"
-					print-in-colour orange "Total requirement is ${TOTCLUSTERRAM} MiB but system only has ${TOTSYSTEMRAM} MiB free"
+					print-in-colour orange "Not enough free RAM available for your desired configuration:"
+					print-in-colour orange "Total requirement is ${TOTCLUSTERRAM} MiB but system only has ${SYSTEMAVAILRAM} MiB free"
 					echo 
 				fi
 	
@@ -4176,7 +4553,9 @@ process-stage-gatherclusterconfiguration() {
 
 		# We write a bunch of stuff for later retrieval in $YAKKODEFAULTS
 		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}
+		STUBFILES=${CLUSTERSETUPDIR}/stubfiles
 		mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
+		mkdir ${STUBFILES} > /dev/null 2>&1
 
 		NETWORKNAME=net-${YAKKONAME}-${CLUSTERNAME}
 		NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml
@@ -4186,8 +4565,13 @@ process-stage-gatherclusterconfiguration() {
 		CLUSTERPROXY="${BASENETWORK}.${PROXYADDRESS}"
                 WEBSERVERIP=${CLUSTERPROXY}
 		OCPSSHKEY=~/.ssh/id_rsa_ocp.${CLUSTERNAME}
-		DNSMASQCONFIGFILE=/etc/NetworkManager/dnsmasq.d/dnsmasq-${YAKKONAME}-${CLUSTERNAME}.conf
-		HAPROXYCONFIGFILE=/etc/haproxy/${YAKKONAME}/${CLUSTERNAME}.cfg
+
+		# These are files that will be placed in the right place on cluster boot, YAKKOSTUBFILE_*
+		YAKKOSTUBFILE_DNSMASQ=/etc/NetworkManager/dnsmasq.d/yakko-${CLUSTERNAME}-dnsmasq.conf
+		YAKKOSTUBFILE_HAPROXY=/etc/haproxy/conf.d/yakko-${CLUSTERNAME}-haproxy.cfg
+		YAKKOSTUBFILE_NETWORKMANAGER=/etc/NetworkManager/conf.d/yakko-${CLUSTERNAME}-NetworkManager.conf
+		YAKKOSTUBFILE_HTTPD=/etc/httpd/conf.d/yakko-${CLUSTERNAME}-httpd.conf
+		YAKKOSTUBFILE_RESOLVED="/etc/systemd/resolved.conf.d/yakko-${CLUSTERNAME}-resolved.conf"
 
 		# We calculate the BASEMACADDRESS last digit here...
 		# This in case there is more than one cluster defined... Maybe...
@@ -4397,7 +4781,37 @@ PULLSECRETFILE=${YAKKOSETUPDIR}/.pullsecret
 LASTBUILDCONFIG=${YAKKOSETUPDIR}/.lastyakkobuild
 YAKKODEFAULTS=${YAKKOSETUPDIR}/.yakkodefaults # Filename where all defaults for YAKKO are kept
 
+
+# Now that we know where we stand, we can offer a new YAKKO landing place for a second, third etc cluster
 cd ${YAKKOSETUPDIR} >/dev/null 2>&1 # Just change to the directory of action from hereon
+if [ "$1" == addcluster ]
+then
+	# New with ~2.5?
+	echo "To add a new cluster, you will need to run YAKKO from a new directory altogether."
+	echo -n  "Enter a new directory to create and install YAKKO in: "
+	read NEWYAKKODIRECTORY
+
+	mkdir ${NEWYAKKODIRECTORY} 2>/dev/null
+	check-for-error-and-exit $? "Could not create new directory - try again"
+
+	cp yakko ${NEWYAKKODIRECTORY}
+	touch ${NEWYAKKODIRECTORY}/.yakkohome # this marks it as 'installed'
+	chmod 544 ${NEWYAKKODIRECTORY}/yakko
+	cp .pullsecret ${NEWYAKKODIRECTORY}
+
+	echo
+	echo "NOTES:"
+        echo "  - YAKKO cannot run both clusters at the same time as HAProxy allows only one cluster "
+	echo "    through the same ports (80,443,6443,22623)"
+	echo "  - To ensure separation, always use a different terminal when interacting with different"
+	echo "    clusters - else you may find that your KUBECONFIG variable will cause problems."
+	echo "  - Each YAKKO directory keeps its own images, so be sure to purge accordingly"
+	echo
+	echo "Done - change diretory to [${NEWYAKKODIRECTORY}] to start installing your new cluster!"
+	echo
+	exit
+fi
+
 
 # We load YAKKO defaults whether they exist... or not.
 source ${YAKKODEFAULTS} > /dev/null 2>&1
@@ -4408,8 +4822,33 @@ source ${YAKKODEFAULTS} > /dev/null 2>&1
 # if the user passed a parameter, let's capture it here... it could be "infra" or "ops"
 YAKKOCALLOPTION=$1
 
+# V2.2 - purgedownloads gets a free pass
+if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == purgedownloads ) || "${YAKKOCALLOPTION}" == purgedownloads ]]
+then
+	yakko-infra-operations purgedownloads
+fi
+	
+
 if [ ! -r ${CLUSTERCONFIGFILE} ]
 then
+
+	# We check if the user is already messing with another cluster
+	if [ -v KUBECONFIG ]
+	then
+		echo "KUBECONFIG is already set. To run up a new cluster, make sure this variable is not set at start!"
+		echo
+		exit
+	fi
+
+	# We check if there are any other clusters running?
+	RUNNINGCLUSTER=$(virsh list | grep master-0 | cut -f2,3 -d. | awk '{print $1}')
+	[ ! -z "${RUNNINGCLUSTER}" ] && {
+		echo "OpenShift cluster [${RUNNINGCLUSTER}] is currently running on this host."
+		echo "To configure a new cluster, shut down the running cluster first!"
+		echo
+		exit
+	}	
+
 	# Make sure you don't launch it twice
 	check-if-yakko-running
 
@@ -4436,7 +4875,7 @@ then
 
 	fi
 
-	THISPLATFORM="$(cat /etc/os-release | grep '^ID=' | cut -f2 -d=) $(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d=)"
+	THISPLATFORM="$(cat /etc/os-release | grep '^ID=' | cut -f2 -d= | tr -d "\"") $(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d= | tr -d "\"")"
 
 	echo "${TESTEDPLATFORMS}" | grep "${THISPLATFORM}" > /dev/null 2>&1
 	if [ $? -ne 0 ]
@@ -4456,10 +4895,11 @@ else
 	if [ "$BUILTWITHYAKKOVERSION" != "$YAKKOVERSION" ]
 	then
 		echo
-		echo "ALERT: This cluster was built using YAKKO version $BUILTWITHYAKKOVERSION."
-		echo "       You are using a different YAKKO version - $YAKKOVERSION."
+		print-in-colour red "ALERT: This cluster was built using YAKKO version $BUILTWITHYAKKOVERSION."
+		print-in-colour red "       You are using a different YAKKO version - $YAKKOVERSION."
 		echo
 		echo "VISIT: https://github.com/ozchamo/YAKKO"
+		echo
 		echo
 		print-in-colour ${YAKKOTEXTCOLOR}  "<Press any key to continue>"
 		read CONTINUE
@@ -4471,10 +4911,21 @@ else
 	then
 		yakko-infra-operations deletecluster $3
 	fi
+
 	if [ "${YAKKOCALLOPTION}" == deletecluster  ]
 	then
 		yakko-infra-operations deletecluster $2
 	fi
+
+	# We check if there are any other clusters running?
+	RUNNINGCLUSTER=$(virsh list | grep master-0 | grep -v ${CLUSTERFQDN} | cut -f2,3 -d. | awk '{print $1}')
+	[ ! -z "${RUNNINGCLUSTER}" ] && {
+		echo "This cluster is currently shutdown."
+		echo
+		echo "OpenShift cluster [${RUNNINGCLUSTER}] is currently running on this host."
+		echo
+		exit
+	}	
 
 	# V1.1 - restartservices gets a free pass
 	if [ "${YAKKOCALLOPTION}" == infra -a "$2" == restartservices ]
@@ -4486,35 +4937,47 @@ else
 	if [ ! -z "${CLUSTERCOMPLETE}" ] 
 	then
 
-		# We first check to see if the cluster is powered up - and void hassle
-		check-cluster-state 0 power
-		if [ $? -eq 4 ]
+		if [ $# -eq 0 ] # parameters go here when there is a cluster - see above and (backup: for developers)
 		then
-
-			# When the cluster is shutdown, you can start it or DELETE it!
-
-			if [[ ( "${YAKKOCALLOPTION}" == infra &&  "$2" == startcluster ) || "${YAKKOCALLOPTION}" == startcluster ]]
-			then	
-				yakko-infra-operations startcluster
+			check-cluster-state 0 power
+			if [ $? -eq 4 ]
+			then
+				echo "Cluster [${CLUSTERFQDN}] is powered off"
+				echo
+				exit
 			fi
 
-			echo
-			echo "The cluster is shutdown. Call 'yakko infra startcluster' to start it up!"
-			echo
-			cleanup-and-exit
+			check-cluster-state 1 api
+
+			check-oc-credentials
+			check-cluster-state 1  # yakko is called on an existing cluster - check it!
+		fi
+
+		# We first check to see if the cluster is powered up - and avoid hassle
+		if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == startcluster ) || "${YAKKOCALLOPTION}" == startcluster ]]
+		then	
+			check-cluster-state 0 power
+			if [ $? -eq 4 ]
+			then
+				yakko-infra-operations startcluster
+			else
+				echo "Cluster [${CLUSTERFQDN}] is already running."
+				echo
+				exit
+			fi
 		fi
 
 		if [[ ( "${YAKKOCALLOPTION}" == infra &&  "$2" == stopcluster ) || "${YAKKOCALLOPTION}" == stopcluster ]]
 		then	
-			yakko-infra-operations stopcluster
-			cleanup-and-exit
-		fi
-
-
-		if [ $# -eq 0 ] # parameters go here when there is a cluster - see above and (backup: for developers)
-		then
-			check-oc-credentials
-			check-cluster-state 1  # yakko is called on an existing cluster - check it!
+			check-cluster-state 0 power
+			if [ $? -eq 0 ]
+			then
+				yakko-infra-operations stopcluster
+			else
+				echo "Cluster [${CLUSTERFQDN}] is powered off!"
+				echo
+				exit
+			fi
 		fi
 
 		if [ $YAKKOCALLOPTION == "infra" ]

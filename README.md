@@ -1,8 +1,12 @@
 # YAKKO 
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
-## CURRENT VERSION: 2.22 (20211124.1637)
+## CURRENT VERSION: 3.00 (20211221.1706)
 Support for OCP 4.9 and single node/single master clusters
+What's new? 
+- Support for installing multiple clusters (but run one a a time!)
+- Support for resizing node RAM
+- Purging existing downloaded OCP images on disk
 
 ## INTRODUCTION
 If you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!**
@@ -18,6 +22,7 @@ Why would you want to run your own (single-box) cluster, isn't that self defeati
 - You can test your more complex apps on multiple worker nodes 'for real' 
 - You might be a a fan of "Self hosting"
 - OCP Pull Secret from Red Hat have a lifetime of 60 days, so re-installing is kinda useful
+- Mess with different clusters (note - only one cluster running at a time)
 - LEARN without Fear or Consequences!
 
 In a nutshell, what does yakko do? 
