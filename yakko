@@ -1,7 +1,7 @@
 #!/bin/bash
 
 YAKKOVERSION=3.00 
-YAKKODATE=20211221.1706
+YAKKODATE=20211221.1717
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
