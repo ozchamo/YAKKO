@@ -2,7 +2,9 @@
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
 ## WHAT IS YAKKO?
-YAKKO is an IPI-like installer for Red Hat OpenShift (IPI = Installer Provisioned Infrastructure). What this means is that the installer also provisions everything! In this case, "everything" sits in one system, which is why there is no Red Hat provided installer for this non-enterpise situation. So, if you want to run up an OpenShift cluster, and have a big PC/small server then this might be for you. 
+**The Short Explanation:** YAKKO installs OpenShift on your server running RHEL/Fedora.  
+
+**The Long Explanation:** YAKKO is an "IPI-like" installer for Red Hat OpenShift (IPI = Installer Provisioned Infrastructure). What this means is that the installer also provisions everything! In this case, "everything" sits in one system, which is why there is no Red Hat provided installer for this non-enterpise situation. So, if you want to run up an OpenShift cluster with multiple nodes (1 or 3 masters/many workers) or why not, a Single Node Cluster ("SNC") and you have a big PC/small server with RHEL or Fedora, then YAKKO might be for you. 
 
 There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!** If you are a Linux tinkerer with a penchant for the command line and all things Red Hat/Fedora, YAKKO might just be that new friend you were looking for to play with Kubernetes.
 
