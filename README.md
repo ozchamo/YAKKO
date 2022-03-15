@@ -89,7 +89,10 @@ The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7
 - Your own DNS server that can handle wildcards (but YAKKO can handle this responsibility)
 ---
 ## HOW TO - INSTALL or "DAY 1"
-#### [[Watch (an earlier vesion of) YAKKO in action building OpenShift]](https://youtu.be/hLsUp7dwxdQ)
+#### ➜ [Watch YAKKO 4.01 (text build) build a Single Node Cluster "SNC"](https://asciinema.org/a/2DJYgTFn1R9wLHVYDuCi5isaf)
+#### ➜ [Watch YAKKO 4.01 (text build) build a 3m+2w Cluster](https://asciinema.org/a/NloEXfUHUdXVH6NIUOdcSkHqF)
+#### ➜ [Watch (an earlier vesion of) YAKKO in action building OpenShift (video with voiceover)](https://youtu.be/hLsUp7dwxdQ)
+#### STEPS
 1) Get the 'yakko' script as user "root": 
    - You can clone the repo (ideally on /) OR  
    - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
