@@ -9,10 +9,10 @@
 There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!** If you are a Linux tinkerer with a penchant for the command line and all things Red Hat/Fedora, YAKKO might just be that new friend you were looking for to play with Kubernetes.
 
 ---
-## CURRENT VERSION: 4.0 (20220304.0951)
+## CURRENT VERSION: 4.01 (20220315.1824)
 What's new? 
 - YAKKO 4.0, what??!! I've decided to call this release MAJOR, because YAKKO is slowing down as it's really mostly done. Yes, there, I said it. The intent that comes with the stability is that new versions going forward will be 'compatible' with 4.0 unless otherwise advised. That means that if you download a new version of YAKKO, it will only warn you if there is an internal change that won't work with the philosophies established with this release.
-- Support for OpenShift 4.9 and single node/single master clusters
+- Support for OpenShift 4.10 and single node/single master clusters
 - Support for installing multiple clusters (but run one at a time!)
 - Support for resizing (master/worker) node RAM - on the go!
 - Setting up NFS shares for registry and for Namespace/Project storage on your server
@@ -78,7 +78,7 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 **Tested combinations to date with this release:**
 - RHEL 8.5 
 - Fedora 35
-- OpenShift 4.9 
+- OpenShift 4.9 and 4.10
 
 **What do I use?**  
 The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 250 OpenShift clusters with YAKKO! And my "prod" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 with 64GB RAM and 8c/16t). And no, I have never used spinning disk, if you do, I wish you luck.
