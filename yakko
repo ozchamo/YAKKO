@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=4.1
-YAKKODATE=20220324.2138
+YAKKOVERSION=4.11
+YAKKODATE=20220325.0901
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -472,6 +472,7 @@ get-yakko-host-ip() {
 			fi
 		done
 		YAKKOHOSTIPCHANGED=0
+		echo
 	fi
 	# get-yakko-host-ip is used in QUESTIONS so technically the below is out of place there
 	# But, since there is nothing to update at the point, that's OK, it won't do anything
@@ -811,7 +812,7 @@ check-cluster-state() {
 	else
 		# We are not being asked to print anything
 		# We manipulate the return value if we are just being asked about the API server
-		if [ ${SPECIALQUERY} == "api" -a ${OCPACCESSSTATUS} == 2 ]
+		if [ "${SPECIALQUERY}" == "api" -a ${OCPACCESSSTATUS} == 2 ]
 		then
 			OCPACCESSSTATUS=0
 		fi
@@ -1118,10 +1119,21 @@ restart-virtual-network() {
 
 check-oc-credentials() {
 	# We now make sure that the user can 'oc' into the cluster 
+	check-cluster-state 0
+	if [ $? -eq 4 ]
+	then
+		echo "The API server is not available."
+		echo "Cluster operators may in recovering from a degraded state.  "
+		echo "Where possible, check operator state (oc get co)"
+		echo
+		cleanup-and-exit
+	fi
+
 	OCPUSER=$(${OCCOMMAND} whoami 2>/dev/null)
 	if [ $? -ne 0 ]
 	then
 		OCPUSER=unknown
+		echo "Could not obtain user credentials for OpenShift (oc whoami). "
 	fi
 	echo " system:admin kube:admin ${YAKKOADMIN} " | grep  "${OCPUSER}" >/dev/null 2>&1
 	check-for-error-and-exit $? "You must be logged in to OpenShift as an administrator to run ${YAKKONAME}\n       Try 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'\n       If kubeadmin is still available, the password is [$(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)]\n       If you cannot login, check 'oc get co', 'oc get nodes' and 'oc get csr'\n       to understand the state of the cluster before the API server can let you in"
@@ -1259,63 +1271,98 @@ restart-services-OLD() {
 		sleep 1
 }
 
-restart-services() {
 
+update-services() {
+
+	# $1 is one of [ start | stop | restart ]
+
+	SERVICESMODE=$1
+
+	if [ $SERVICESMODE == "start" ]
+	then
+		echo "Starting YAKKO supporting services:"
 		echo
-		echo "Stopping HAproxy service..."
-		systemctl stop haproxy
+
+		echo "- Inserting stub files for YAKKO services into system..."
+		restore-stubfiles
 		echo
-		sleep 1
 
-		echo "Stopping virtual Network..."
-		virsh net-destroy ${NETWORKNAME}
-		sleep 1
-
-		#echo "Restarting libvirtd service..."
-		#systemctl restart libvirtd
-		#echo
-		#sleep 1
-
-		echo "Stopping libvirtd service..."
-		systemctl restart libvirtd
-		echo
-		sleep 1
-
-		echo "Starting virtual Network..."
-		virsh net-start ${NETWORKNAME}
+		echo "- Starting virtual Network..."
+		virsh net-start ${NETWORKNAME} > /dev/null 2>&1
 		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
-		sleep 1
+		echo
 
-		echo "Starting libvirtd service..."
+		echo "- Re/starting libvirtd service..."
 		systemctl restart libvirtd
 		echo
-		sleep 1
 
 		if [ -f ${SYSTEMSTUBFILE_RESOLVED} ]
 		then
-			echo "Restarting systemd-resolved service..."
+			echo "- Starting systemd-resolved service..."
 			systemctl restart systemd-resolved
 			echo
 		fi
 
-		echo "Restarting NetworkManager service..."
+		echo "- Re/starting NetworkManager service..."
 		systemctl restart NetworkManager
 		echo
 
-		echo "Starting HAproxy service..."
-		# You cannot rebuild the HAproxy file here because API server is not available
-		# because haproxy is stopped (see above)
+		echo "- Starting HAproxy service..."
 		systemctl start haproxy
 		check-for-error-and-exit $? "Could not start HAproxy service"
 		echo
-		sleep 1
 
-		echo "Restarting HTTPD service..."
-		systemctl restart httpd
-		check-for-error-and-exit $? "Could not start HTTPD service"
+		echo "- Re/starting HTTPD service..."
+		systemctl restart httpd > /dev/null 2>&1
+		#check-for-error-and-exit $? "Could not start HTTPD service"
 		echo
-		sleep 1
+	fi
+
+	if [ $SERVICESMODE == "stop" ]
+	then
+		echo "Stopping YAKKO supporting services:"
+		echo
+
+		echo "- Removing stub files for YAKKO services from system..."
+		remove-stubfiles
+		echo
+
+		echo "- Stopping HAproxy service..."
+		systemctl stop haproxy
+		echo
+
+		if [ -f ${SYSTEMSTUBFILE_RESOLVED} ]
+		then
+			echo "- Re/starting systemd-resolved service..."
+			systemctl restart systemd-resolved
+			echo
+		fi
+
+		echo "- Restarting NetworkManager service..."
+		systemctl restart NetworkManager
+		echo
+
+		echo "- Restarting HTTPD service without port :${WEBSERVERPORT}..." 
+		systemctl restart httpd > /dev/null 2>&1
+		#check-for-error-and-exit $? "Could not start HTTPD service"
+		echo
+
+		echo "- Stopping virtual Network..."
+		virsh net-destroy ${NETWORKNAME} >/dev/null 2>&1
+		echo
+
+		echo "- Restarting libvirtd service..."
+		systemctl restart libvirtd
+		echo
+	fi
+
+	if [ $SERVICESMODE == "restart" ]
+	then
+		update-services stop
+		update-services start
+	fi
 }
+
 
 purge-downloads() {
 
@@ -1704,7 +1751,7 @@ print-yakko-infra-operations-menu() {
 	echo
 	echo "OPTION is one of:"
 	echo "    - startcluster    ->  Start up an existing cluster"
-	echo "    - stopcluster     ->  Shutdown an existing cluster"
+	echo "    - stopcluster     ->  Shutdown or suspend the cluster in memory"
 	echo "    - addnode         ->  Grow the cluster compute capacity by adding a new compute/infra node"
 	echo "    - deletenode      ->  Remove a running node from the cluster"
 	echo "    - nodelogs        ->  Display the logs of a particular node"
@@ -1740,6 +1787,8 @@ yakko-infra-operations() {
 	then
 		#infrastartcluster
 
+		print-option-header infra "Start cluster [${CLUSTERNAME}]"
+
 		check-cluster-state 0 power
 		CLUSTERSTATE=$?
 		if [ $CLUSTERSTATE -eq 0 ]
@@ -1748,6 +1797,11 @@ yakko-infra-operations() {
 			echo
 			cleanup-and-exit
 		fi
+
+		get-yakko-host-ip
+		update-services start
+		print-in-colour green "All supporting YAKKO services services have been restored."
+		echo
 
 		if [ $CLUSTERSTATE -eq 5 ]
 		then
@@ -1768,183 +1822,109 @@ yakko-infra-operations() {
 					[ $? -ne 0 ] && echo "Failed to resume node [${NODE}]"
 				fi
 			done
+			sleep 1
+			print-in-colour green "All nodes are now resumed. Check 'oc get nodes'."
 
-			get-yakko-host-ip
-			if [ $? -eq 1 ]
-			then
-				echo "IP address has changed, restarting services"
-				restore-stubfiles
-				restart-services 
-			fi
-
-			exit
-		fi
-
-		print-option-header infra "Start cluster [${CLUSTERNAME}]"
-
-		get-yakko-host-ip # We check with the user if the IP address has changed
-
-		# We remove any services that should not be there - just in case
-		remove-stubfiles
-
-		# We copy all the required STUBFILES for this cluster
-		# Sometimes, HA Proxy may not be running...
-		echo "Restarting Network services..."
-		echo
-
-		# We'll stop the network - only because if it's up it will throw an error on net-start
-		echo "Starting virtual Network..."
-		virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
-		virsh net-start ${NETWORKNAME}
-		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
-		echo
-		sleep 2
-
-		# and we restore the files - consistency
-		restore-stubfiles 
-
-		if [ -f ${STUBFILES}/resolved.conf ]
-		then
-			echo "Starting systemd/resolved..."
-			# We deal with RESOLVED only if the file exists
-			systemctl restart systemd-resolved
-			check-for-error-and-exit $? "Could not restart systemd/resolved, the cluster cannot function without this."
-			echo
-			sleep 2
-		fi
-
-		echo "Starting NetworkManager/dnsmasq... (If ssh'd into server this may disconnect you momentarily)"
-		systemctl restart NetworkManager
-		check-for-error-and-exit $? "Could not restart NetworkManager, the cluster cannot function without this."
-		echo
-		sleep 5
-
-		echo "Starting HAProxy..."
-		systemctl restart haproxy
-		check-for-error-and-exit $? "Could not restart HA Proxy, the cluster cannot function without this."
-		echo
-
-		echo "Starting HTTPD..."
-		systemctl restart httpd
-		if [ $? -ne 0 ]
-		then
-			echo  Failed to start HTTPD
-			echo Retrying HTTPD in 20 seconds...
-			sleep 20
-			systemctl restart httpd
-			check-for-error-and-exit $? "Could not start httpd, the cluster cannot function without this."
-		fi
-		echo
-		
-		# We check physical RAM and establish a boundary for VMs max RAM on boot.
-		# Sorry if you don't like this ;)
-
-		if [ -n "$1" ]
-		then
-			# Surely the user knows what he's doing...
-			NODENAME=$1
-			virsh setmaxmem ${NODENAME} ${SYSTEMPHYSICALRAM}M >/dev/null 2>&1
-
-       	 		echo "Starting up: ${NODENAME}"
-       	 		virsh start ${NODENAME}.${CLUSTERFQDN}
 		else
 			get-node-list all
 			for NODENAME in ${NODELIST}
 			do
 				virsh setmaxmem ${NODENAME} ${SYSTEMPHYSICALRAM}M >/dev/null 2>&1
 
-       	 			echo "Starting up: ${NODENAME}"
-       	 			virsh start ${NODENAME}
+      		 			echo "Starting up: ${NODENAME}"
+      		 			virsh start ${NODENAME}
 				sleep 1
 			done
-		fi
-		echo "You can check:"
-		echo "- virsh list --all | grep ${CLUSTERFQDN}  to see if all nodes are running"
-		echo "- oc get nodes  to see if all nodes become Ready"
-		echo "- oc get clusterversion  to check cluster status"
-		echo "- yakko  for a general update"
-		echo
-		echo Nodes are coming up. Waiting up to 10 minutes for API and User Login services.
 
-		TIMER=300 # This is just for the API
-		while true
-		do 
-			wget -O /tmp/wget.$$.startcluster https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
-			[ $? -eq 5 -o $? -eq 0 ] && break
-			echo -n .
-			sleep 5
-			TIMER=$((TIMER-5))
-			if [ $TIMER -eq 0 ]
-			then
-				echo
-				echo "ERROR: Failed to observe API server running"
-				echo "       Cannot proceed - debug separately!"
-				echo
-				cleanup-and-exit
-			fi
-		done
-		echo
-		echo "API server now available - waiting for administrator login."
-		sleep 60
-
-		TIMER=300 # if this takes too long it could be CSRs awaiting
-
-		if [ -z "${YAKKOADMIN}" ] 
-		then
-			YAKKOADMIN=kubeadmin
-			ADMINPASSWORD=$(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)
-		else
-			echo -n "To bring the cluster up, please enter the password for administrative user [${YAKKOADMIN}]: "
-			read -s ADMINPASSWORD
-		fi
-
-		while true
-		do 
-			${OCCOMMAND} login --insecure-skip-tls-verify=true -u ${YAKKOADMIN} -p ${ADMINPASSWORD} https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
-
-			${OCCOMMAND} whoami > /dev/null 2>&1
-			[ $? -eq 0 ] && {
-				echo
-				echo "Now logged in to OCP as $(${OCCOMMAND} whoami)"
-				break
-			}
-
-			echo -n .
-			sleep 10
-
-			TIMER=$((TIMER-10))
-
-			if [ $TIMER -eq 0 ]
-			then
-				PENDINGCSRS=$(${OCCOMMAND} get csr 2>/dev/null | grep Pending | awk '{ print $1 }')
-                        	if [ -n "${PENDINGCSRS}" ]
-                        	then
-                               		set $PENDINGCSRS
+			echo "You can check:"
+			echo "- virsh list --all | grep ${CLUSTERFQDN}  to see if all nodes are running"
+			echo "- oc get nodes  to see if all nodes become Ready"
+			echo "- oc get clusterversion  to check cluster status"
+			echo "- yakko  for a general update"
+			echo
+			echo Nodes are coming up. Waiting up to 10 minutes for API and User Login services.
+	
+			TIMER=300 # This is just for the API
+			while true
+			do 
+				wget -O /tmp/wget.$$.startcluster https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
+				[ $? -eq 5 -o $? -eq 0 ] && break
+				echo -n .
+				sleep 5
+				TIMER=$((TIMER-5))
+				if [ $TIMER -eq 0 ]
+				then
 					echo
-                               		print-in-blink "ALERT: There are [$#] Pending Certificate Signing Requests (CSRs) that need approval!"
-					echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
-                               		echo
+					echo "ERROR: Failed to observe API server running"
+					echo "       Cannot proceed - debug separately!"
+					echo
 					cleanup-and-exit
 				fi
-				echo
-				echo "Not waiting any longer for administrative login. "
-				echo "You should attempt 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'"
-				echo
-				cleanup-and-exit
-                       	 fi
-		done
-		#oc config use-context "${CLUSTERCONTEXT}" 
-
+			done
+			echo
+			echo "API server now available - waiting for administrator login."
+			sleep 60
+	
+			TIMER=300 # if this takes too long it could be CSRs awaiting
+	
+			if [ -z "${YAKKOADMIN}" ] 
+			then
+				YAKKOADMIN=kubeadmin
+				ADMINPASSWORD=$(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)
+			else
+				echo -n "To bring the cluster up, please enter the password for administrative user [${YAKKOADMIN}]: "
+				read -s ADMINPASSWORD
+			fi
+	
+			while true
+			do 
+				${OCCOMMAND} login --insecure-skip-tls-verify=true -u ${YAKKOADMIN} -p ${ADMINPASSWORD} https://api.${CLUSTERFQDN}:6443 > /dev/null 2>&1
+	
+				${OCCOMMAND} whoami > /dev/null 2>&1
+				[ $? -eq 0 ] && {
+					echo
+					echo "Now logged in to OCP as $(${OCCOMMAND} whoami)"
+					break
+				}
+	
+				echo -n .
+				sleep 10
+	
+				TIMER=$((TIMER-10))
+	
+				if [ $TIMER -eq 0 ]
+				then
+					PENDINGCSRS=$(${OCCOMMAND} get csr 2>/dev/null | grep Pending | awk '{ print $1 }')
+       	                 	if [ -n "${PENDINGCSRS}" ]
+       	                 	then
+       	                        		set $PENDINGCSRS
+						echo
+       	                        		print-in-blink "ALERT: There are [$#] Pending Certificate Signing Requests (CSRs) that need approval!"
+						echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
+       	                        		echo
+						cleanup-and-exit
+					fi
+					echo
+					echo "Not waiting any longer for administrative login. "
+					echo "You should attempt 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'"
+					echo
+					cleanup-and-exit
+       	                	 fi
+			done
+			#oc config use-context "${CLUSTERCONTEXT}" 
+	
+			echo
+			print-in-colour green "Cluster API endpoint https://${CLUSTERFQDN}:6443 is now available."
+			print-in-colour green "Web console may take a little longer."
+		fi
 		echo
-		echo "Cluster API endpoint https://${CLUSTERFQDN}:6443 is now available."
-		echo "Web console may take a little longer."
-		echo
-
 	fi
 
 	if [ ${OPTION} == "stopcluster" ]
 	then
 		#infrastopcluster
+
+		print-option-header infra "Stop cluster [${CLUSTERNAME}]"
 
 		check-cluster-state 0 power
 		if [ $? -eq 4 -o $? -eq 5 ]
@@ -1953,8 +1933,6 @@ yakko-infra-operations() {
 			echo
 			cleanup-and-exit
 		fi
-
-		print-option-header infra "Stop cluster [${CLUSTERNAME}]"
 
 		if [ -n "$1" ]
 		then
@@ -1970,12 +1948,21 @@ yakko-infra-operations() {
 				exit
 			fi
 		else
+			echo "This option lets you shutdown a cluster OR suspend it in memory."
+			echo "You can pass an additional parameter to specify the behaviour"
+			echo "through the command line (useful in cronjobs for example):"
+			echo "  - yakko stopcluster shutdown"
+			echo "  - yakko stopcluster suspend"
+			echo
+			echo
+	
 			while true
 			do
 				echo "What do you want to do?"
-				echo "1. Suspend cluster"
-				echo "2. Shutdown cluster"
-				echo -n "Enter (1) or (2): "
+				echo "(1) Suspend cluster"
+				echo "(2) Shutdown cluster"
+				echo
+				echo -n "Select (1) or (2): "
 	
 				read STOPCLUSTEROPTION
 				if [ ${STOPCLUSTEROPTION} == "1" -o ${STOPCLUSTEROPTION} == "2" ]
@@ -1986,6 +1973,7 @@ yakko-infra-operations() {
 					echo
 				fi
 			done
+			echo
 		fi
 
 		if [ ${STOPCLUSTEROPTION} == "1" ]
@@ -2007,61 +1995,35 @@ yakko-infra-operations() {
 					[ $? -ne 0 ] && { echo  "Failed to suspend node [${NODE}]"; echo; }
 				fi
 			done
-			cleanup-and-exit
-		fi
-
-		# User picked 2...
-		get-node-list active
-		for NODENAME in ${NODELIST}
-		do
-			echo "Shutting down: ${NODENAME}"
-			ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${NODENAME} sudo shutdown -h 1
-			#check-for-error-and-exit $? "Failed to log in to node [$NODENAME] for shutdown"
-			#exit
+			sleep 1
+			print-in-colour orange "All nodes are now suspended."
+		else
+			# User picked 2...
+			get-node-list active
+			for NODENAME in ${NODELIST}
+			do
+				echo "Shutting down: ${NODENAME}"
+				ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${NODENAME} sudo shutdown -h 1
+				#check-for-error-and-exit $? "Failed to log in to node [$NODENAME] for shutdown"
+				#exit
+				echo
+			done
+	
+			echo "Shutting down all nodes, please wait a few moments."
+			while true
+			do
+				[ $(virsh list --all | grep ${CLUSTERFQDN} | grep -c running) -eq 0 ] && break
+				sleep 2
+				echo -n "."
+			done
 			echo
-		done
-
-		echo "Shutting down all nodes, please wait a few moments."
-		while true
-		do
-			[ $(virsh list --all | grep ${CLUSTERFQDN} | grep -c running) -eq 0 ] && break
-			sleep 2
-			echo -n "."
-		done
-		echo
-		echo "All cluster nodes are now powered off."
-		echo
-		echo "Stopping associated network services..."
-		# We copy all the required STUBFILES for this cluster
-		if [ -f ${SYSTEMSTUBFILE_RESOLVED} ]
-		then
-			# We deal with RESOLVED only if the file exists
-			rm ${SYSTEMSTUBFILE_RESOLVED}
-			systemctl restart systemd-resolved
-			[ $? -ne 0 ] && echo "Could not restart systemd/resolved."
-			sleep 2
+			print-in-colour orange "All cluster nodes are now powered off."
 		fi
+		echo
 
-		virsh net-destroy ${NETWORKNAME}
-		[ $? -ne 0 ] && echo "Could not stop virtual network ${NETWORKNAME}"
+		update-services stop
 
-		rm ${SYSTEMSTUBFILE_DNSMASQ} > /dev/null 2>&1
-		rm ${SYSTEMSTUBFILE_NETWORKMANAGER}> /dev/null 2>&1
-		systemctl restart NetworkManager
-		[ $? -ne 0 ] && echo "Could not restart NetworkManager."
-		sleep 2
-
-		rm ${SYSTEMSTUBFILE_HAPROXY}
-		systemctl stop haproxy
-		[ $? -ne 0 ] && echo "Could not stop HAProxy."
-		sleep 2
-
-		# This one can be noisy if there is no httpd config file left so we silence it
-		#cp ${SYSTEMSTUBFILE_HTTPD} ${STUBFILES}/httpd.conf 
-		rm ${SYSTEMSTUBFILE_HTTPD}
-		systemctl restart httpd 2>/dev/null
-
-		echo "Network services are off and YAKKO configuration files have been retired until startup."
+		print-in-colour orange "Network services are off and YAKKO configuration files have been retired until startup."
 		echo
 	fi
 
@@ -2583,12 +2545,11 @@ yakko-infra-operations() {
 			echo
 			cleanup-and-exit
 		fi
-		remove-stubfiles
 
 		#This will actually let you change IP address on the go...
 		get-yakko-host-ip
-		restore-stubfiles
-		restart-services 
+
+		update-services restart
 	fi
 
 
@@ -4363,24 +4324,18 @@ process-stage-httpserver() {
 			do
 				PORTAVAILABLE=N  # Checkpointer
 
-				# Check of the port is in use, if so, LSOFPORSTATE == 0:q
+				# Check of the port is in use, if so, LSOFPORSTATE == 0
 				lsof -i -P -n | grep LISTEN | grep ":${CANDIDATEPORT} " >/dev/null  # list open files - lsof
 				LSOFPORTSTATE=$?
 
 				if [ $LSOFPORTSTATE -eq 1 ]
 				then
 					WEBSERVERPORT=$CANDIDATEPORT 
+					PORTAVAILABLE=Y
+
 					if [ ${SELINUXSTATE} -eq 0 ] 
 					then
 						semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT} 2>/dev/null
-						if [ $? -ne 0 ]
-						then
-							echo "Could not set SELinux context for port [${WEBSERVERPORT}]"
-						else
-							PORTAVAILABLE=Y
-						fi
-					else
-						PORTAVAILABLE=Y
 					fi
 				fi
 
@@ -5900,7 +5855,7 @@ then
 	print-in-colour blue  "When a CLUSTER IS CONFIGURED you can call:"
 	echo "    yakko  (no params)    -> show running cluster state and configuration"
 	echo "    yakko startcluster    -> startup or resume the cluster (same as yakko infra startcluster)"
-	echo "    yakko stopcluster     -> shutdown the cluster (same as yakko infra stopcluster)"
+	echo "    yakko stopcluster     -> shutdown or suspend (in-memory) the cluster"
 	echo "    yakko deletecluster   -> delete the running or stopped cluster (same as yakko infra deletecluster)"
 	echo "    yakko infra <options> -> make infrastructure changes offered by yakko (see below)" 
 	echo "    yakko ops <options>   -> make operational changes offered by yakko (see below)"
@@ -6159,12 +6114,6 @@ else
 	# We check if there are any other clusters running?
 	check-if-another-yakko-cluster-running
 
-	# V1.1 - restartservices gets a free pass
-	if [ "${YAKKOCALLOPTION}" == infra -a "$2" == restartservices ]
-	then
-		yakko-infra-operations restartservices
-	fi
-	
 	# $CLUSTERCOMPLETE is defined if THERE IS a cluster configured
 	if [ -n "${CLUSTERCOMPLETE}" ] 
 	then
@@ -6186,17 +6135,17 @@ else
 				cleanup-and-exit
 			fi
 
-
 			check-cluster-state 0 api
 
 			check-oc-credentials
 			check-cluster-state 1  # yakko is called on an existing cluster - check it!
 		fi
 
-		# We first check to see if the cluster is powered up - and avoid hassle
-		if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == startcluster ) || "${YAKKOCALLOPTION}" == startcluster ]]
+		if [[ ( "${YAKKOCALLOPTION}" == infra &&  "$2" == startcluster ) || "${YAKKOCALLOPTION}" == startcluster ]]
 		then	
-			yakko-infra-operations startcluster
+			[ "${YAKKOCALLOPTION}" == infra ] && shift
+			shift
+			yakko-infra-operations startcluster $*
 		fi
 
 		if [[ ( "${YAKKOCALLOPTION}" == infra &&  "$2" == stopcluster ) || "${YAKKOCALLOPTION}" == stopcluster ]]
