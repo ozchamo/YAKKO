@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=4.01
-YAKKODATE=20220315.1824
+YAKKOVERSION=4.1
+YAKKODATE=20220324.2138
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -438,6 +438,7 @@ get-yakko-host-ip() {
 
 	CURRENTYAKKOHOSTIP=$(ip -br -4 addr show | grep ${YAKKOMAINHOSTPORT}| awk '{print $3}' | cut -f1 -d/)
 
+	YAKKOHOSTIPCHANGED=1
 	if [ "${CURRENTYAKKOHOSTIP}" != "${YAKKOHOSTIP}" ] 
 	then
 		while true
@@ -470,10 +471,17 @@ get-yakko-host-ip() {
 				break
 			fi
 		done
+		YAKKOHOSTIPCHANGED=0
 	fi
 	# get-yakko-host-ip is used in QUESTIONS so technically the below is out of place there
 	# But, since there is nothing to update at the point, that's OK, it won't do anything
-	update-yakko-host-ip
+	if [ $YAKKOHOSTIPCHANGED -eq 0 ]
+	then
+		update-yakko-host-ip
+		return 1 # 1 means IP address changed
+	else
+		return 0 # 0 means IP address did not change
+	fi
 }
 
 advance-stage-progression() {
@@ -523,6 +531,7 @@ rollback-stage-progression() {
 get-node-list() {
 
 	# call: get-node-list <all|active> [print]
+	# returns the requested node list in NODELIST
 
 	if [ $1 == "all" ]
 	then
@@ -628,7 +637,8 @@ check-cluster-state() {
 	# 1 -> API not good
 	# 2 -> Web Console not good
 	# 3 -> API and Web Console not good
-	# 4 -> Cluster is shutdown!
+	# 4 -> Cluster is shutdown
+	# 5 -> Cluster is suspended
 
 	PRINTSTATE=$1
 	SPECIALQUERY=$2
@@ -636,11 +646,16 @@ check-cluster-state() {
 	# This is only executed at the end of the process or on subsequent calls
 	source ${CLUSTERCONFIGFILE}
 
-	#MASTERUPCOUNT=$(virsh list | grep "master-" | grep ${CLUSTERFQDN}  | wc -l)
-	MASTERUPCOUNT=$(virsh list | grep "master-" | grep -c ${CLUSTERFQDN})
+	MASTERUPCOUNT=$(virsh list | grep "master-" | grep running | grep -c ${CLUSTERFQDN})
+	MASTERSUSPENDEDCOUNT=$(virsh list | grep "master-" | grep pause | grep -c ${CLUSTERFQDN})
 
 	if [ "${SPECIALQUERY}" == "power"  ]
 	then
+		if [ ${MASTERSUSPENDEDCOUNT} -ne 0 ]
+		then
+			return 5 #  The masters are suspended (note that this is not granular enough, but c'mon)
+		fi
+
 		if [ ${MASTERUPCOUNT} -eq 0 ]
 		then
 			return 4 # Special case - the cluster is SHUTDOWN!
@@ -693,9 +708,12 @@ check-cluster-state() {
 
 		if [ $OCPACCESSSTATUS -eq 3 ]
 		then 
-			if [ ${MASTERUPCOUNT} -eq 0 ]
+			if [ ${MASTERSUSPENDEDCOUNT} -ne 0 ]
 			then
-				echo "All nodes of the cluster are currently powered off."
+				echo "The cluster is currently suspended. Call 'yakko startcluster'"
+			elif [ ${MASTERUPCOUNT} -eq 0 -o ${MASTERSUSPENDEDCOUNT} -ne 0 ]
+			then
+				echo "The cluster is currently powered off. Call 'yakko startcluster'"
 			else
 				echo "ERROR: The cluster does not appear to be accessible or there is no console active yet."
 				echo
@@ -1190,7 +1208,7 @@ remove-stubfiles() {
 
 }
 
-restart-services() {
+restart-services-OLD() {
 
 		echo "Stopping virtual Network..."
 		virsh net-destroy ${NETWORKNAME}
@@ -1210,7 +1228,7 @@ restart-services() {
 		virsh net-start ${NETWORKNAME}
 		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
 		sleep 1
-		echo "Restarting libvirtd service after virtual network restart"
+		echo "Restarting libvirtd service after virtual network restart..."
 		systemctl restart libvirtd
 		echo
 		sleep 1
@@ -1224,6 +1242,65 @@ restart-services() {
 
 		echo "Restarting NetworkManager service..."
 		systemctl restart NetworkManager
+		echo
+
+		echo "Starting HAproxy service..."
+		# You cannot rebuild the HAproxy file here because API server is not available
+		# because haproxy is stopped (see above)
+		systemctl start haproxy
+		check-for-error-and-exit $? "Could not start HAproxy service"
+		echo
+		sleep 1
+
+		echo "Restarting HTTPD service..."
+		systemctl restart httpd
+		check-for-error-and-exit $? "Could not start HTTPD service"
+		echo
+		sleep 1
+}
+
+restart-services() {
+
+		echo
+		echo "Stopping HAproxy service..."
+		systemctl stop haproxy
+		echo
+		sleep 1
+
+		echo "Stopping virtual Network..."
+		virsh net-destroy ${NETWORKNAME}
+		sleep 1
+
+		#echo "Restarting libvirtd service..."
+		#systemctl restart libvirtd
+		#echo
+		#sleep 1
+
+		echo "Stopping libvirtd service..."
+		systemctl restart libvirtd
+		echo
+		sleep 1
+
+		echo "Starting virtual Network..."
+		virsh net-start ${NETWORKNAME}
+		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
+		sleep 1
+
+		echo "Starting libvirtd service..."
+		systemctl restart libvirtd
+		echo
+		sleep 1
+
+		if [ -f ${SYSTEMSTUBFILE_RESOLVED} ]
+		then
+			echo "Restarting systemd-resolved service..."
+			systemctl restart systemd-resolved
+			echo
+		fi
+
+		echo "Restarting NetworkManager service..."
+		systemctl restart NetworkManager
+		echo
 
 		echo "Starting HAproxy service..."
 		# You cannot rebuild the HAproxy file here because API server is not available
@@ -1663,6 +1740,46 @@ yakko-infra-operations() {
 	then
 		#infrastartcluster
 
+		check-cluster-state 0 power
+		CLUSTERSTATE=$?
+		if [ $CLUSTERSTATE -eq 0 ]
+		then
+			echo "Cluster [${CLUSTERFQDN}] is already running."
+			echo
+			cleanup-and-exit
+		fi
+
+		if [ $CLUSTERSTATE -eq 5 ]
+		then
+			echo "Resuming (from in-memory) all cluster nodes"
+			echo
+			sleep 1
+			get-node-list all
+	
+			for NODE in ${NODELIST}
+			do
+				virsh list --all | grep ${NODE} | grep running >/dev/null 2>&1
+				if [ $? -eq 0 ] 
+				then
+					echo  "Node [${NODE}] is already in \"running\" state"
+					echo
+				else
+					virsh resume $NODE 
+					[ $? -ne 0 ] && echo "Failed to resume node [${NODE}]"
+				fi
+			done
+
+			get-yakko-host-ip
+			if [ $? -eq 1 ]
+			then
+				echo "IP address has changed, restarting services"
+				restore-stubfiles
+				restart-services 
+			fi
+
+			exit
+		fi
+
 		print-option-header infra "Start cluster [${CLUSTERNAME}]"
 
 		get-yakko-host-ip # We check with the user if the IP address has changed
@@ -1762,6 +1879,7 @@ yakko-infra-operations() {
 				echo
 				echo "ERROR: Failed to observe API server running"
 				echo "       Cannot proceed - debug separately!"
+				echo
 				cleanup-and-exit
 			fi
 		done
@@ -1828,8 +1946,71 @@ yakko-infra-operations() {
 	then
 		#infrastopcluster
 
+		check-cluster-state 0 power
+		if [ $? -eq 4 -o $? -eq 5 ]
+		then
+			echo "Cluster [${CLUSTERFQDN}] is not active. Run 'yakko startcluster'."
+			echo
+			cleanup-and-exit
+		fi
+
 		print-option-header infra "Stop cluster [${CLUSTERNAME}]"
 
+		if [ -n "$1" ]
+		then
+			if [ "$1" == "suspend" ]
+			then
+				STOPCLUSTEROPTION=1
+			elif [ "$1" == "shutdown" ]
+			then
+				STOPCLUSTEROPTION=2
+			else
+				echo "Invalid option [$1] - cannot proceed with stopping the cluster."
+				echo
+				exit
+			fi
+		else
+			while true
+			do
+				echo "What do you want to do?"
+				echo "1. Suspend cluster"
+				echo "2. Shutdown cluster"
+				echo -n "Enter (1) or (2): "
+	
+				read STOPCLUSTEROPTION
+				if [ ${STOPCLUSTEROPTION} == "1" -o ${STOPCLUSTEROPTION} == "2" ]
+				then
+					break
+				else
+					echo "You must enter 1 or 2".
+					echo
+				fi
+			done
+		fi
+
+		if [ ${STOPCLUSTEROPTION} == "1" ]
+		then
+			echo "Suspending (in-memory) all cluster nodes"
+			echo
+			sleep 1
+			get-node-list active
+	
+			for NODE in ${NODELIST}
+			do
+				virsh list --all | grep ${NODE} | grep paused >/dev/null 2>&1
+				if [ $? -eq 0 ] 
+				then
+					echo  "Node [${NODE}] is already in \"pause\" state"
+					echo
+				else
+					virsh suspend $NODE  # & will make them stop more or less at the same time...
+					[ $? -ne 0 ] && { echo  "Failed to suspend node [${NODE}]"; echo; }
+				fi
+			done
+			cleanup-and-exit
+		fi
+
+		# User picked 2...
 		get-node-list active
 		for NODENAME in ${NODELIST}
 		do
@@ -2383,14 +2564,15 @@ yakko-infra-operations() {
 
 		print-option-header infra "Restart Services: Virtual Network/HAproxy/libvirtd"
 
-		echo "Restarting services can be useful when you are having issues that cascade from"
-		echo "manually manipulating virtual networking, HAproxy and libvirtd services. "
+		echo "Restarting services allows the cluster to be adapt to changes in your host"
+		echo "IP address, for example when your laptop changes wireless networks."
+		echo
+		echo "Restarting services can be also be useful when you are having issues that"
+	       	echo "cascade from manually manipulating virtual networking, HAproxy and libvirtd. "
 		echo "These components can also become 'stale' when making changes in SElinux and "
 		echo "firewalld. 'restartservices' refreshes these components in the best order"
 		echo "to suit a coordinated refresh."
 
-		echo
-		print-in-colour lightblue "But more importantly - it adapts to changes in the IP address of your YAKKO server!"
 		echo
 
 		ask-user "Restart all supporting services" Y
@@ -2405,7 +2587,6 @@ yakko-infra-operations() {
 
 		#This will actually let you change IP address on the go...
 		get-yakko-host-ip
-
 		restore-stubfiles
 		restart-services 
 	fi
@@ -3462,7 +3643,7 @@ yakko-ops-operations() {
 		if [ $(check-registry-type) == "none" ]
 		then
 			echo "Cannot deploy YAKKO test app as there is no registry defined."
-			echo 'First, run "yakko ops localregistry or yakko ops nfsregistry"'
+			echo "First, run 'yakko ops localregistry' or 'yakko ops nfsregistry'"
 			echo
 			cleanup-and-exit
 		fi
@@ -3787,6 +3968,7 @@ process-stage-dns() {
 				else
 					ALERTNETWORKDNS=0
 				fi
+				echo "ALERTNETWORKDNS=${ALERTNETWORKDNS}" >> ${CLUSTERCONFIGFILE} # This in case the cluster fails to build and we pickup later
 
 				USEYAKKODNSMASQ=0
 				echo "USEYAKKODNSMASQ=0" >> ${CLUSTERCONFIGFILE}
@@ -4174,32 +4356,37 @@ process-stage-httpserver() {
 			# First, make sure that nothing is listening already on port ${WEBSERVERPORT}
 
 			CANDIDATEPORT=${WEBSERVERPORT}
+
+			install-package-if-missing lsof
+
 			while true 
 			do
-				install-package-if-missing lsof
-				lsof -i -P -n | grep LISTEN | grep ":${CANDIDATEPORT} " >/dev/null
-				RESULT1=$?
+				PORTAVAILABLE=N  # Checkpointer
 
-				if [ ${SELINUXSTATE} -eq 0 ] 
-				then
-					semanage port -l | grep ${CANDIDATEPORT} | grep http >/dev/null 2>&1
-					RESULT2=$?
-				else
-					RESULT2=0
-				fi
+				# Check of the port is in use, if so, LSOFPORSTATE == 0:q
+				lsof -i -P -n | grep LISTEN | grep ":${CANDIDATEPORT} " >/dev/null  # list open files - lsof
+				LSOFPORTSTATE=$?
 
-				if [ $RESULT1 -eq 1 -a $RESULT2 -eq 0 ]
+				if [ $LSOFPORTSTATE -eq 1 ]
 				then
 					WEBSERVERPORT=$CANDIDATEPORT 
 					if [ ${SELINUXSTATE} -eq 0 ] 
 					then
 						semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT} 2>/dev/null
+						if [ $? -ne 0 ]
+						then
+							echo "Could not set SELinux context for port [${WEBSERVERPORT}]"
+						else
+							PORTAVAILABLE=Y
+						fi
+					else
+						PORTAVAILABLE=Y
 					fi
-					WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}
-					echo "WEBSERVERPORT=${WEBSERVERPORT}" >> ${YAKKODEFAULTS}
-					echo "WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}" >> ${YAKKODEFAULTS}
-					break
-				else
+				fi
+
+				if [ $PORTAVAILABLE == "N" ]
+				then
+					echo
 					echo "ERROR: Port ${CANDIDATEPORT} is not available for serving RHCOS images."
 					echo "       If this is not something you can change, enter an alternative port"
 					echo "       now, or press <CTRL-C> to address."
@@ -4209,12 +4396,17 @@ process-stage-httpserver() {
 					if [[ ${RESPONSE} =~ ^[0-9]+[0-9]+[0-9]+[0-9]+$ ]]  
 					then
 						echo "Testing port ${RESPONSE} for availability"
-						echo
 						CANDIDATEPORT=$RESPONSE
 						sleep 1
 					else
 						echo "That's not a port number, try again!"
 					fi
+				else
+					WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}
+					echo "WEBSERVERPORT=${WEBSERVERPORT}" >> ${YAKKODEFAULTS}
+					echo "WEBSERVERURL=http://${WEBSERVERIP}:${WEBSERVERPORT}" >> ${YAKKODEFAULTS}
+					break
+
 				fi
 			done 
 			echo "Using port [${WEBSERVERPORT}] for RHCOS image delivery"
@@ -5707,7 +5899,7 @@ then
 	echo
 	print-in-colour blue  "When a CLUSTER IS CONFIGURED you can call:"
 	echo "    yakko  (no params)    -> show running cluster state and configuration"
-	echo "    yakko startcluster    -> startup the cluster (same as yakko infra startcluster)"
+	echo "    yakko startcluster    -> startup or resume the cluster (same as yakko infra startcluster)"
 	echo "    yakko stopcluster     -> shutdown the cluster (same as yakko infra stopcluster)"
 	echo "    yakko deletecluster   -> delete the running or stopped cluster (same as yakko infra deletecluster)"
 	echo "    yakko infra <options> -> make infrastructure changes offered by yakko (see below)" 
@@ -5980,12 +6172,20 @@ else
 		if [ $# -eq 0 ] # parameters go here when there is a cluster - see above and (backup: for developers)
 		then
 			check-cluster-state 0 power
-			if [ $? -eq 4 ]
+			CLUSTERSTATE=$?
+			if [ $CLUSTERSTATE -eq 4 ]
 			then
-				echo "Cluster [${CLUSTERFQDN}] is powered off"
+				echo "Cluster [${CLUSTERFQDN}] is powered off. Call 'yakko startcluster'."
 				echo
 				cleanup-and-exit
 			fi
+			if [ $CLUSTERSTATE -eq 5 ]
+			then
+				echo "Cluster [${CLUSTERFQDN}] is suspended. Call 'yakko startcluster'."
+				echo
+				cleanup-and-exit
+			fi
+
 
 			check-cluster-state 0 api
 
@@ -5996,28 +6196,14 @@ else
 		# We first check to see if the cluster is powered up - and avoid hassle
 		if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == startcluster ) || "${YAKKOCALLOPTION}" == startcluster ]]
 		then	
-			check-cluster-state 0 power
-			if [ $? -eq 4 ]
-			then
-				yakko-infra-operations startcluster
-			else
-				echo "Cluster [${CLUSTERFQDN}] is already running."
-				echo
-				cleanup-and-exit
-			fi
+			yakko-infra-operations startcluster
 		fi
 
 		if [[ ( "${YAKKOCALLOPTION}" == infra &&  "$2" == stopcluster ) || "${YAKKOCALLOPTION}" == stopcluster ]]
 		then	
-			check-cluster-state 0 power
-			if [ $? -eq 0 ]
-			then
-				yakko-infra-operations stopcluster
-			else
-				echo "Cluster [${CLUSTERFQDN}] is powered off!"
-				echo
-				cleanup-and-exit
-			fi
+			[ "${YAKKOCALLOPTION}" == infra ] && shift
+			shift
+			yakko-infra-operations stopcluster $*
 		fi
 
 		if [ $YAKKOCALLOPTION == "infra" ]
