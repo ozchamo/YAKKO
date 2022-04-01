@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=4.11
-YAKKODATE=20220325.0902
+YAKKOVERSION=4.12
+YAKKODATE=20220401.1216
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -177,6 +177,15 @@ populate-yakkodefaults() {
 
 ################ A FEW REUSABLE FUNCTIONS ################################################
 
+print-yakko-header() {
+	# Here comes the colorful YAKKO header!
+	clear -x
+	print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
+	echo
+	print-in-colour ${YAKKOTEXTCOLOR} " YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. ${YAKKOVERSION})"
+	print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
+	echo
+}
 
 print-in-colour() {
 
@@ -415,7 +424,12 @@ delete-kvm-machine()
 }
 
 get-yakko-host-ip() {
-	for PHYSICALNWPORT in $(ls -l /sys/class/net/ | grep -v virtual | awk '{print $9}')
+
+	# $1 is "" or "notifychange" so that we can send the message that the IP address has changed
+	# "" is used only during QUESTIONS
+
+	NOTIFYCHANGE=$1
+	for PHYSICALNWPORT in $(ls -l /sys/class/net/ | grep -v virtual | grep -v total | awk '{print $9}')
 	do
 		for CONNECTEDNWPORT in $(ip -br -4 addr show | grep UP |awk '{print$1}')
 		do
@@ -436,11 +450,20 @@ get-yakko-host-ip() {
 	# 1. The cluster is being configured for the first time
 	# 2. The cluster is being rebooted and the IP address may changed (think demo laptop)
 
-	CURRENTYAKKOHOSTIP=$(ip -br -4 addr show | grep ${YAKKOMAINHOSTPORT}| awk '{print $3}' | cut -f1 -d/)
+	CURRENTYAKKOHOSTIP=$(ip -br -4 addr show | grep ${YAKKOMAINHOSTPORT} | awk '{print $3}' | cut -f1 -d/)
+
+	# This parameter is just for flaggin a change message
 
 	YAKKOHOSTIPCHANGED=1
 	if [ "${CURRENTYAKKOHOSTIP}" != "${YAKKOHOSTIP}" ] 
 	then
+		if [ "$NOTIFYCHANGE" == "notifychange" ]
+		then
+			echo
+			print-in-colour orange "ALERT: The IP address of the host has changed [${YAKKOHOSTIP} -> ${CURRENTYAKKOHOSTIP}] "
+			echo
+		fi
+
 		while true
 		do
 			echo -n  "Enter the IP address of this host on your network [${CURRENTYAKKOHOSTIP}]: "
@@ -472,16 +495,15 @@ get-yakko-host-ip() {
 			fi
 		done
 		YAKKOHOSTIPCHANGED=0
-		echo
 	fi
 	# get-yakko-host-ip is used in QUESTIONS so technically the below is out of place there
 	# But, since there is nothing to update at the point, that's OK, it won't do anything
 	if [ $YAKKOHOSTIPCHANGED -eq 0 ]
 	then
 		update-yakko-host-ip
-		return 1 # 1 means IP address changed
+		return 0 # 1 means IP address changed
 	else
-		return 0 # 0 means IP address did not change
+		return 1 # 0 means IP address did not change
 	fi
 }
 
@@ -669,7 +691,7 @@ check-cluster-state() {
 	virsh net-list --all | grep ${NETWORKNAME} | grep " active" >/dev/null 2>&1
 	if [ $? -ne 0 ]
 	then
-		print-in-blink" ALERT: The virtual network (${NETWORKNAME}) does not appear to be operational. Check status with 'virsh net-list --all'"
+		print-in-blink "ALERT: The virtual network (${NETWORKNAME}) does not appear to be operational. Check status with 'virsh net-list --all'"
 		echo
 		cleanup-and-exit
 	fi
@@ -684,12 +706,12 @@ check-cluster-state() {
 	fi
 
 	# If the web console is available, offer info for it regardless of the output above
-	#echo -n " Please wait - checking OCP cluster console availability..."
+	echo -n " Please wait - checking OCP cluster console availability..."
 	wget -O $OCPWGETTMP ${CLUSTERWEBURL} --no-check-certificate -4 > /dev/null 2>&1
 	RESULTCONSOLE=$?
 	blank-line
 	
-	#echo -n " Please wait - checking OCP API server availability...     "
+	echo -n " Please wait - checking OCP API server availability...     "
 	wget -O $OCPWGETTMP ${CLUSTERAPIURL} -4 > /dev/null 2>&1
 	RESULTSERVER=$?
 	blank-line
@@ -707,12 +729,12 @@ check-cluster-state() {
 		echo " CLUSTER: ${CLUSTERFQDN}  (Ver: $(${OCCOMMAND} get clusterversion | sed -e "1 d" | awk '{print $2}')  Built: $(echo ${CLUSTERCOMPLETE} | awk '{print $4}'))"   
 		echo
 
-		if [ $OCPACCESSSTATUS -eq 3 ]
+		if [ ${OCPACCESSSTATUS} -eq 1 -o ${OCPACCESSSTATUS} -eq 3 ]
 		then 
 			if [ ${MASTERSUSPENDEDCOUNT} -ne 0 ]
 			then
 				echo "The cluster is currently suspended. Call 'yakko startcluster'"
-			elif [ ${MASTERUPCOUNT} -eq 0 -o ${MASTERSUSPENDEDCOUNT} -ne 0 ]
+			elif [ ${MASTERUPCOUNT} -eq 0 ]
 			then
 				echo "The cluster is currently powered off. Call 'yakko startcluster'"
 			else
@@ -1119,8 +1141,8 @@ restart-virtual-network() {
 
 check-oc-credentials() {
 	# We now make sure that the user can 'oc' into the cluster 
-	check-cluster-state 0
-	if [ $? -eq 4 ]
+	check-cluster-state 0 api
+	if [ $? -eq 1 ]
 	then
 		echo "The API server is not available."
 		echo "Cluster operators may in recovering from a degraded state.  "
@@ -1220,57 +1242,6 @@ remove-stubfiles() {
 
 }
 
-restart-services-OLD() {
-
-		echo "Stopping virtual Network..."
-		virsh net-destroy ${NETWORKNAME}
-		sleep 1
-
-		echo "Stopping HAproxy service..."
-		systemctl stop haproxy
-		echo
-		sleep 1
-
-		echo "Restarting libvirtd service..."
-		systemctl restart libvirtd
-		echo
-		sleep 1
-
-		echo "Starting virtual Network..."
-		virsh net-start ${NETWORKNAME}
-		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
-		sleep 1
-		echo "Restarting libvirtd service after virtual network restart..."
-		systemctl restart libvirtd
-		echo
-		sleep 1
-
-		if [ -f ${SYSTEMSTUBFILE_RESOLVED} ]
-		then
-			echo "Restarting systemd-resolved service..."
-			systemctl restart systemd-resolved
-			echo
-		fi
-
-		echo "Restarting NetworkManager service..."
-		systemctl restart NetworkManager
-		echo
-
-		echo "Starting HAproxy service..."
-		# You cannot rebuild the HAproxy file here because API server is not available
-		# because haproxy is stopped (see above)
-		systemctl start haproxy
-		check-for-error-and-exit $? "Could not start HAproxy service"
-		echo
-		sleep 1
-
-		echo "Restarting HTTPD service..."
-		systemctl restart httpd
-		check-for-error-and-exit $? "Could not start HTTPD service"
-		echo
-		sleep 1
-}
-
 
 update-services() {
 
@@ -1280,7 +1251,8 @@ update-services() {
 
 	if [ $SERVICESMODE == "start" ]
 	then
-		echo "Starting YAKKO supporting services:"
+		echo
+		print-in-colour green "Starting YAKKO supporting services"
 		echo
 
 		echo "- Inserting stub files for YAKKO services into system..."
@@ -1288,9 +1260,15 @@ update-services() {
 		echo
 
 		echo "- Starting virtual Network..."
-		virsh net-start ${NETWORKNAME} > /dev/null 2>&1
-		check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
-		echo
+		virsh net-list | awk '{ print $1 }' | grep "${NETWORKNAME}$" >/dev/null 2>&1
+		if [ $? -ne 0 ]
+		then	
+			# This here because sometimes, the virtual network is still active and
+			# will throw a fit of asked to restart
+			virsh net-start ${NETWORKNAME} > /dev/null 2>&1
+			check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
+			echo
+		fi
 
 		echo "- Re/starting libvirtd service..."
 		systemctl restart libvirtd
@@ -1303,8 +1281,19 @@ update-services() {
 			echo
 		fi
 
-		echo "- Re/starting NetworkManager service..."
+		echo "- Re/starting NetworkManager service and testing..."
 		systemctl restart NetworkManager
+		WAITTIME=30
+		while true
+		do
+			sleep 1
+			ping -c 1 ${YAKKOHOSTIP} >/dev/null 2>&1 && break
+			((WAITTIME--))
+			[ $WAITTIME -eq 0 ] && {
+				echo "Timed out waiting for main interface to come UP. Exiting."
+				clean-up-and-exit
+			}
+		done
 		echo
 
 		echo "- Starting HAproxy service..."
@@ -1316,11 +1305,17 @@ update-services() {
 		systemctl restart httpd > /dev/null 2>&1
 		#check-for-error-and-exit $? "Could not start HTTPD service"
 		echo
+
+		sleep 5
+
+		print-in-colour green "All services started. Some operators may take some time to settle."
+		echo
 	fi
 
 	if [ $SERVICESMODE == "stop" ]
 	then
-		echo "Stopping YAKKO supporting services:"
+		echo
+		print-in-colour green "Stopping YAKKO supporting services"
 		echo
 
 		echo "- Removing stub files for YAKKO services from system..."
@@ -1347,17 +1342,21 @@ update-services() {
 		#check-for-error-and-exit $? "Could not start HTTPD service"
 		echo
 
-		echo "- Stopping virtual Network..."
+		echo "- Stopping virtual network..."
 		virsh net-destroy ${NETWORKNAME} >/dev/null 2>&1
 		echo
 
 		echo "- Restarting libvirtd service..."
 		systemctl restart libvirtd
 		echo
+
+		sleep 5
 	fi
 
 	if [ $SERVICESMODE == "restart" ]
 	then
+		# There is no need to test if IP address has changed because it's always
+		# checked in advance of getting here
 		update-services stop
 		update-services start
 	fi
@@ -1798,10 +1797,8 @@ yakko-infra-operations() {
 			cleanup-and-exit
 		fi
 
-		get-yakko-host-ip
+		get-yakko-host-ip notifychange 
 		update-services start
-		print-in-colour green "All supporting YAKKO services services have been restored."
-		echo
 
 		if [ $CLUSTERSTATE -eq 5 ]
 		then
@@ -1996,7 +1993,7 @@ yakko-infra-operations() {
 				fi
 			done
 			sleep 1
-			print-in-colour orange "All nodes are now suspended."
+			print-in-colour green "All nodes are now suspended."
 		else
 			# User picked 2...
 			get-node-list active
@@ -2017,14 +2014,11 @@ yakko-infra-operations() {
 				echo -n "."
 			done
 			echo
-			print-in-colour orange "All cluster nodes are now powered off."
+			print-in-colour green "All cluster nodes are now powered off."
 		fi
-		echo
 
 		update-services stop
 
-		print-in-colour orange "Network services are off and YAKKO configuration files have been retired until startup."
-		echo
 	fi
 
 	if [ "${OPTION}" == "addnode" ]
@@ -2526,16 +2520,32 @@ yakko-infra-operations() {
 
 		print-option-header infra "Restart Services: Virtual Network/HAproxy/libvirtd"
 
-		echo "Restarting services allows the cluster to be adapt to changes in your host"
-		echo "IP address, for example when your laptop changes wireless networks."
+		echo "Restarting services allows the cluster to adapt to changes in your host"
+		echo "IP address, for example when your laptop changes wireless/physical networks."
 		echo
-		echo "Restarting services can be also be useful when you are having issues that"
+		echo "Restarting services can  also be useful when you are having issues that"
 	       	echo "cascade from manually manipulating virtual networking, HAproxy and libvirtd. "
 		echo "These components can also become 'stale' when making changes in SElinux and "
-		echo "firewalld. 'restartservices' refreshes these components in the best order"
-		echo "to suit a coordinated refresh."
+		echo "firewalld. 'restartservices' refreshes these components in coordination"
+		echo
+		echo "When the cluster is suspended or shut down, 'restartservices' can be used"
+		echo "to attempt removal of any suspected services that may still be running."
 
 		echo
+
+		check-cluster-state 0 power
+		CLUSTERSTATE=$?
+		if [ $CLUSTERSTATE -eq 4 -o $CLUSTERSTATE -eq 5 ]
+		then
+			print-in-colour orange  "Cluster [${CLUSTERFQDN}] is not currently active."
+			echo
+			ask-user "Attempt stopping all supporting services" Y
+			if [ $? -eq 0 ]
+			then
+				update-services stop
+			fi
+			cleanup-and-exit
+		fi
 
 		ask-user "Restart all supporting services" Y
 		if [ $? -eq 1 ]
@@ -2546,9 +2556,7 @@ yakko-infra-operations() {
 			cleanup-and-exit
 		fi
 
-		#This will actually let you change IP address on the go...
-		get-yakko-host-ip
-
+		get-yakko-host-ip notifychange 
 		update-services restart
 	fi
 
@@ -2935,8 +2943,8 @@ yakko-ops-operations() {
 		# We check that you can still go on after cred check
 		check-oc-credentials
 
-		[ "${YAKKOHTPASSWD}" -eq 1 ] 
-		check-for-error-and-exit $? "You need to first configure Local Passwords via \"YAKKONAME enable htpasswd\"" 
+		[ "${YAKKOHTPASSWD}" == 1 ] 
+		check-for-error-and-exit $? "You need to first configure Local Passwords via \"$YAKKONAME ops htpasswd\"" 
 
 		if [ -z "$1" ]
 		then
@@ -5212,7 +5220,7 @@ process-stage-gatherclusterconfiguration() {
 
 			echo "It is recommended that this host have a fixed IP address and a resolvable hostname."
 			YAKKOHOSTIP=""
-			get-yakko-host-ip
+			get-yakko-host-ip 
 
 
 	       		### QUESTION: basenetwork ## Stored in YAKKO defaults
@@ -5836,13 +5844,7 @@ then
 	yakko-backup $*
 fi
 
-# Here comes the colorful YAKKO header!
-clear -x
-print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
-echo
-print-in-colour ${YAKKOTEXTCOLOR} " YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. ${YAKKOVERSION})"
-print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
-echo
+print-yakko-header
 
 if [ "$1" == "usage" ]
 then
@@ -6117,7 +6119,6 @@ else
 	# $CLUSTERCOMPLETE is defined if THERE IS a cluster configured
 	if [ -n "${CLUSTERCOMPLETE}" ] 
 	then
-
 		if [ $# -eq 0 ] # parameters go here when there is a cluster - see above and (backup: for developers)
 		then
 			check-cluster-state 0 power
@@ -6135,9 +6136,12 @@ else
 				cleanup-and-exit
 			fi
 
-			check-cluster-state 0 api
+			get-yakko-host-ip notifychange && {
+			       	update-services restart
+				sleep 30
+				print-yakko-header # This to refresh the above update-services call
+			}
 
-			check-oc-credentials
 			check-cluster-state 1  # yakko is called on an existing cluster - check it!
 		fi
 

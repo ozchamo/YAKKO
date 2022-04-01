@@ -9,7 +9,7 @@
 There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!** If you are a Linux tinkerer with a penchant for the command line and all things Red Hat/Fedora, YAKKO might just be that new friend you were looking for to play with Kubernetes.
 
 ---
-## CURRENT VERSION: 4.11 (20220325.0902)
+## CURRENT VERSION: 4.12 (20220401.1216)
 What's new? 
 - YAKKO 4.0, what??!! I've decided to call this release MAJOR, because YAKKO is slowing down as it's really mostly done. Yes, there, I said it. The intent that comes with the stability is that new versions going forward will be 'compatible' with 4.0 unless otherwise advised. That means that if you download a new version of YAKKO, it will only warn you if there is an internal change that won't work with the philosophies established with this release.
 - Support for OpenShift 4.10 and single node/single master clusters
