@@ -64,7 +64,6 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 **A single PC/server with:**
 - Access to the internet
 - RHEL or Fedora as the base installed operating system ("Server with GUI" and then YAKKO gives you a working cluster)
-- A fixed IP address to your network (wireless or wired)
 - Ports 80 and 443 available (to pass through to your applications in OpenShift)
 - 16GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB. I've succeed with as little as 12GB, used for a Single Node Cluster setup)
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
