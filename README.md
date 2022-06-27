@@ -9,7 +9,7 @@
 There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!** If you are a Linux tinkerer with a penchant for the command line and all things Red Hat/Fedora, YAKKO might just be that new friend you were looking for to play with Kubernetes.
 
 ---
-## CURRENT VERSION: 4.20 (20220526.1733)
+## CURRENT VERSION: 4.21 (20220627.1901)
 What's new? 
 - Tested on RHEL 8.5, 8.6 and 9.0 (Yes!) and of course, Fedora 35 & 36
 - Tested with OCP 4.10 and 4.11 Nightly
