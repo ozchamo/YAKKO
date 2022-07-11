@@ -1,7 +1,7 @@
 #!/bin/bash
 
 YAKKOVERSION=4.22
-YAKKODATE=20220711.2004
+YAKKODATE=20220711.2005
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -1011,7 +1011,7 @@ yakko-backup() {
 					echo
 					echo "Git PWD: $GCLAVE"
 					ask-user "Ready to push? [Y]" Y
-					if [ $? -ne 0 ]
+					if [ $? -eq 0 ]
 					then
 						git push -f origin master
 					else
