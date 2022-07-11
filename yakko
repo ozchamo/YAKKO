@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=4.21
-YAKKODATE=20220627.1901
+YAKKOVERSION=4.22
+YAKKODATE=20220711.2004
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -74,7 +74,7 @@ VNCPORT=5905 # We'll leave the firt few ports open for traditional VNC uses
 BOOTSTRAPWAITTIME=120 # Time to wait after bootstrap has finished and we delete the resource
 
 # Some parameter options
-YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / changeaccess / restartservices / listresources / purgedownloads / resizeram / nfsshare / deletecluster "
+YAKKOINFRAOPTIONS=" startcluster / stopcluster / addnode / deletenode / nodelogs / sshtonode / changeaccess / restartservices / listresources / purgedownloads / resizeram / describehw / nfsshare / deletecluster "
 YAKKOCLUSTEROPTIONS=" htpasswd / useradd / userdelete / mastersched / nodelabel / localregistry / nfsregistry / nfsmap / ingresscert / approvecsrs / yakkotest "
 
 # And some facts...
@@ -294,6 +294,8 @@ cleanup-and-exit() {
 	local TEXTCOLOUR=$1
 	local TEXTMESSAGE=$2
 
+	echo # Make it all look pretty
+
 	if [ -n "$TEXTMESSAGE" ]
 	then
 		print-in-colour $TEXTCOLOUR $TEXTMESSAGE
@@ -330,7 +332,6 @@ check-for-error-and-exit() {
 
 		[ $? -eq 0 ] && ${CURRENTSTAGE} rollback 
 	fi
-	echo
 	cleanup-and-exit
 }
 
@@ -406,7 +407,6 @@ check-node-name()
 		[ "${EXITONINVALID}" == "exit" ] && {
 			echo
 			echo "Invalid node name [$CHECKNODENAME]. Exiting..."
-			echo
 			cleanup-and-exit
 		}
 		return 1
@@ -669,7 +669,6 @@ check-cluster-state() {
 	if [ $? -ne 0 ]
 	then
 		print-in-blink "ALERT: The virtual network (${NETWORKNAME}) does not appear to be operational. Check status with 'virsh net-list --all'"
-		echo
 		cleanup-and-exit
 	fi
 
@@ -678,14 +677,14 @@ check-cluster-state() {
 	if [ $? -ne 0 ]
 	then
 		print-in-blink " ALERT: HAproxy seems to be off-line. Check status with 'systemctl status haproxy'"
-		echo
 		cleanup-and-exit
 	fi
 
 	check-cluster-power exit
 
-	#check-oc-credentials
-	check-cluster-api # this is technically unnecessary as check-oc-credentials will bomb out if there is not API server anyway
+	echo -n " Please wait - checking OCP cluster API server availability..."
+	check-oc-credentials blankline
+	#check-cluster-api # this is technically unnecessary as check-oc-credentials will bomb out if there is not API server anyway
 	RESULTSERVER=$?
 
 	CURRENTCLUSTERVERSION=$(${OCCOMMAND} get clusterversion 2>&1 | grep -v "^NAME")
@@ -709,23 +708,21 @@ check-cluster-state() {
 
 	if [ $RESULTSERVER -eq 0 ] 
 	then
-		echo " API Endpoint: [ ✔ ]  ${CLUSTERAPIURL}"
-		echo " API Service:  [ ✔ ] "
+		#echo " API Endpoint: [ ✔ ]  ${CLUSTERAPIURL}"
+		echo " API Service:  [ ✔ ]  ${CLUSTERAPIURL}"
 	elif [ $RESULTSERVER -eq 1 ]
 	then
-		echo " API Endpoint: [ ✘ ]"
-		echo " API Service:  [ ✔ ] "
+		#echo " API Endpoint: [ ✘ ]"
+		echo " API Service:  [ ✔ ]  ${CLUSTERAPIURL}"
 	elif [ $RESULTSERVER -eq 2 ]
 	then
-		echo " API Endpoint: [ ✔ ]  ${CLUSTERAPIURL} "
+		#echo " API Endpoint: [ ✔ ]  ${CLUSTERAPIURL} "
 		echo " API Service:  [ ✘ ]  (cannot execute 'oc' commands to check)"
-		echo
 		cleanup-and-exit orange "You need to be logged in to OpenShift (as admin) for additional information" 
 	elif [ $RESULTSERVER -eq 3 ]
 	then
 		echo " API Endpoint: [ ✘ ] "
 		echo " API Service:  [ ✘ ]  (cannot execute 'oc' commands to check)"
-		echo
 		cleanup-and-exit orange "You need to be logged in to OpenShift (as admin) for additional information"
 	fi
 	echo
@@ -764,6 +761,9 @@ check-cluster-state() {
 	fi
 	echo
 
+	echo " Registry configuration:" $(check-registry-type)
+        echo
+
 	# VERSION 1.1 - report cluster access
 	if [ $HAPROXYACCESS -eq 0 ]
 	then
@@ -783,13 +783,12 @@ check-cluster-state() {
 		echo " - You can access this cluster from another system on your network," 
 		echo "   just add [${YAKKOHOSTIP}] as a DNS server to that system"
 	fi
-	echo
 
 	if [ -n "${NOTSETKUBECONFIG}" ]
 	then
+		echo
 		echo " NOTE: You did not have KUBECONFIG set when you invoked YAKKO."
 		echo "       Remember to use 'source ocp-setup-env' or adjust your environment accordingly!"
-		echo
 	fi
 
 	cleanup-and-exit
@@ -994,19 +993,46 @@ yakko-backup() {
 
 					# We add changes
 					git add yakko README.md YAKKO-architecture.png
+					echo "'git add' exited with code [$?]"
+					echo
 
 					# We commit them with the same message
-					git commit -m "${BACKUPMSG}"
+					ask-user "Ready to commit? [Y]" Y
+					if [ $? -eq 0 ]
+					then
+						git commit -m "${BACKUPMSG}"
+					else
+						echo "OK, exiting - did not commit!"
+						echo
+						exit
+					fi
 
 					# We push
-					echo $GCLAVE
-					git push
+					echo
+					echo "Git PWD: $GCLAVE"
+					ask-user "Ready to push? [Y]" Y
+					if [ $? -ne 0 ]
+					then
+						git push -f origin master
+					else
+						echo "OK, exiting - did not push!"
+						echo
+						exit
+					fi
 
 					# We tag
-					git tag "v${NEWVERSION}"
+					echo
+					ask-user "Ready to tag? [Y]" Y
+					if [ $? -ne 0 ]
+					then
+						git tag "v${NEWVERSION}"
+						git push --tags
+					else
+						echo "OK, exiting - did not tag!"
+						echo
+						exit
+					fi
 
-					#We comment tag, same  for now
-					git push --tags
 				fi
 			fi
 		fi
@@ -1039,7 +1065,6 @@ yakko-backup() {
 		echo "Just drop a directory in that filename and yakko will back itself up in there!"
 	fi
 
-	echo
 	cleanup-and-exit
 
 }
@@ -1136,7 +1161,6 @@ check-cluster-power() {
 		if [ "$DOEXIT" == "exit" ]
 		then
 			echo "The custer is currently in suspended state. Run 'yakko startcluster'."
-			echo
 			cleanup-and-exit
 		fi
 
@@ -1148,7 +1172,6 @@ check-cluster-power() {
 		if [ "$DOEXIT" == "exit" ]
 		then
 			echo "The custer is currently shutdown. Run 'yakko startcluster'."
-			echo
 			cleanup-and-exit
 		fi
 
@@ -1162,7 +1185,14 @@ check-cluster-power() {
 check-oc-credentials() {
 
 	OCPUSER=$(${OCCOMMAND} whoami 2>/dev/null)
-	if [ $? -ne 0 ]
+	CHECKCREDRESULT=$?
+
+	if [ "$1" == "blankline" ]
+	then
+		blank-line
+	fi
+
+	if [ $CHECKCREDRESULT -ne 0 ]
 	then
 		OCPUSER=unknown
 		echo "Could not obtain user credentials for OpenShift (oc whoami). "
@@ -1208,6 +1238,9 @@ check-if-another-yakko-cluster-running() {
 	# [ $? -ne 0 ] && return  # libvirt is not installed, grep came back with non-zero value
 	[ ! -x /usr/bin/virsh ] && return
 
+	virsh list > /dev/null 2>&1
+        check-for-error-and-exit $? "Cannot communicate to the hypervisor via virsh, that's a showstopper!!!!\n   Although restarting libvirtd may clear the error, a reboot may be required"
+
 	if [ -z "${CLUSTERFQDN}" ]
 	then
 		# We are starting a new cluster so we need to lookout that this is not yet set
@@ -1237,7 +1270,6 @@ check-if-another-yakko-cluster-running() {
 		
 		echo
 		echo "You can only one run cluster at a time!" 
-		echo
 
 		cleanup-and-exit
 	}	
@@ -1288,11 +1320,11 @@ update-services() {
 		if [ $? -ne 0 ]
 		then	
 			# This here because sometimes, the virtual network is still active and
-			# will throw a fit of asked to restart
+			# will throw a fit if asked to restart
 			virsh net-start ${NETWORKNAME} > /dev/null 2>&1
 			check-for-error-and-exit $? "Could not start virtual network ${NETWORKNAME}"
-			echo
 		fi
+		echo
 
 		echo "- Re/starting libvirtd service..."
 		systemctl restart libvirtd
@@ -1372,7 +1404,6 @@ update-services() {
 
 		echo "- Restarting libvirtd service..."
 		systemctl restart libvirtd
-		echo
 
 		sleep 5
 	fi
@@ -1478,7 +1509,6 @@ create-nfs-pvc() {
 	if [ $? -eq 0 ]
 	then
 		print-in-colour red "The requested PV [pv-${NFSNAME}] already exists - cannot continue!"
-		echo
 		cleanup-and-exit
 	fi
 
@@ -1591,12 +1621,11 @@ mount-nfs-share() {
 			PERMISSIONOTHER=${PERMISSIONS:8:1}
 			if [ "$PERMISSIONOTHER" == "-" ]
 			then
+				umount ${NFSTESTDIR}
 				echo
 				echo "ERROR: ${NFSSERVER}:/${NFSSHARE} does not have write permissions for the world (it has \"${PERMISSIONS}\")"
 				echo "       This will prevent writing to the share unless user permissions match."
 				echo "       To continue, change the permissions - you can always tune later!"
-			        echo
-				umount ${NFSTESTDIR}
 				cleanup-and-exit
 			fi	
 
@@ -1615,7 +1644,6 @@ mount-nfs-share() {
 				echo
 				echo "ERROR: Test write failed - could not write to share."
 				echo "       Ideally, export options of share on host should be: *(rw,sync,no_wdelay,no_root_squash,insecure)"
-				echo
 				cleanup-and-exit
 			fi
 
@@ -1799,7 +1827,6 @@ print-yakko-infra-operations-menu() {
 	echo "    - purgedownloads  ->  Delete all downloaded OCP images on disk"
 	echo "    - nfsshare        ->  Setup a directory as NFS share for creating a PVC for registry or NS store"
 	echo "    - deletecluster   ->  Delete entire cluster and all infrastructure"
-	echo
 }
 
 yakko-infra-operations() {
@@ -1830,7 +1857,6 @@ yakko-infra-operations() {
 		if [ $CLUSTERSTATE -eq 0 ]
 		then
 			echo "Cluster [${CLUSTERFQDN}] is already running."
-			echo
 			cleanup-and-exit
 		fi
 
@@ -1891,7 +1917,6 @@ yakko-infra-operations() {
 					echo
 					echo "ERROR: Failed to observe API server running"
 					echo "       Cannot proceed - debug separately!"
-					echo
 					cleanup-and-exit
 				fi
 			done
@@ -1906,7 +1931,7 @@ yakko-infra-operations() {
 				YAKKOADMIN=kubeadmin
 				ADMINPASSWORD=$(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password)
 			else
-				echo -n "To allow YAKKO to report on the cluster state, please enter the password for admin user "${YAKKOADMIN}": "
+				echo -n "To allow YAKKO to report on the cluster state, please enter the password for admin user \"${YAKKOADMIN}\": "
 				read -s ADMINPASSWORD
 				echo
 			fi
@@ -1937,13 +1962,11 @@ yakko-infra-operations() {
 						echo
        	                        		print-in-blink "ALERT: There are [$#] Pending Certificate Signing Requests (CSRs) that need approval!"
 						echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
-       	                        		echo
 						cleanup-and-exit
 					fi
 					echo
 					echo "Not waiting any longer for administrative login. "
 					echo "You should attempt 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'"
-					echo
 					cleanup-and-exit
        	                	 fi
 			done
@@ -2087,7 +2110,6 @@ yakko-infra-operations() {
 			then
 				echo
 				echo "ERROR: RAM size needs to be at least $MINWORKERRAMSIZE"
-				echo
 				cleanup-and-exit
 			fi
 			WORKERNODECOUNT=$PARAMWORKERNODECOUNT
@@ -2200,6 +2222,8 @@ yakko-infra-operations() {
 				fi
 			done
 		done 
+		echo "Reconfiguring HAProxy..."
+		update-haproxy-config-file
 
 		echo "Stopping background certificate approval..."
 		kill -s SIGTERM $CSRAPPROVALPID > /dev/null 2>&1
@@ -2211,7 +2235,6 @@ yakko-infra-operations() {
 			print-in-colour red "- Have you assigned enough RAM to the nodes? You requested ${WORKERRAMSIZE} MiB"
 			print-in-colour red "- If your system is slow, perhaps you may want to increase ADDNODETIMEOUT in yakko" 
 		else
-			update-haproxy-config-file
 			print-time-elapsed
 		fi
 		echo
@@ -2242,7 +2265,6 @@ yakko-infra-operations() {
                         [ $? -ne 0 ] && {
 				echo
                         	echo "Invalid node name [${NODENAME}]. Exiting..."
-				echo
 				cleanup-and-exit
 			}
 		else
@@ -2252,14 +2274,12 @@ yakko-infra-operations() {
 			if [ -z "${CURRENTNODES}" ]
 			then
 				echo "There are no worker/infra nodes defined, nothing to delete!"
-				echo
 				cleanup-and-exit
 			fi
 
 			if [ -z "${CURRENTNODES}" ]
 			then
 				echo "There are no nodes available for deletion!"
-				echo
 				cleanup-and-exit
 			fi
 
@@ -2499,7 +2519,6 @@ yakko-infra-operations() {
 		then
 			echo
 			echo "No changes were made. You can only access OpenShift from this server."
-			echo
 			cleanup-and-exit
 		fi
 
@@ -2573,7 +2592,6 @@ yakko-infra-operations() {
 		then
 			echo
 			echo "Restart services aborted."
-			echo
 			cleanup-and-exit
 		fi
 
@@ -2658,6 +2676,27 @@ yakko-infra-operations() {
 		purge-downloads
 	fi 
 
+
+	if [ "${OPTION}" == "describehw" ]
+	then
+		#infradescribehw
+
+		print-option-header infra "Describe this computer's hardware"
+
+		print-in-colour green  "Computer details:"
+		lshw | sed -n "2,4p" | sed -e "s/^ \+//g"
+		echo
+
+		print-in-colour green  "CPU details:"
+		lscpu | head -n 15
+		echo
+
+		print-in-colour green  "Memory details:"
+		lshw | grep -A 8 "\*-memory$" | sed "1d" | sed -e "s/^ \+//g" | grep -v bank
+		echo
+	fi
+	
+
 	if [ ${OPTION} == "nfsshare" ]
 	then
 		#infranfsshare
@@ -2701,7 +2740,6 @@ yakko-infra-operations() {
 				echo "[${NFSSHARE}] is already in the exports list for this server, see /etc/exports"
 				echo "You may want to check for permissions, ideally they should be:"
 				echo "     *(rw,sync,no_wdelay,no_root_squash,insecure)"
-				echo
 				cleanup-and-exit
 			fi
 			
@@ -2742,7 +2780,6 @@ yakko-infra-operations() {
 			echo
 		else 
 			echo "Could not add share to /etc/exports. Cannot continue!"
-			echo
 			cleanup-and-exit
 		fi
 
@@ -2797,7 +2834,6 @@ yakko-infra-operations() {
 		else
 			echo "ALERT: To delete cluster [${CLUSTERNAME}] and all associated ${YAKKONAME} configuration, you also need to pass the clustername" 
 			echo "RUN:   yakko infra deletecluster ${CLUSTERNAME}"
-			echo
 		fi
 	fi
 
@@ -2827,7 +2863,6 @@ print-yakko-ops-operations-menu() {
 	echo "    - ingresscert   ->  Install an existing wildcard certificate"
 	echo "    - approvecsrs   ->  Approve any outstanding CSRs (Certificate Signing Requests)"
 	echo "    - yakkotest     ->  Deploy the 'yakkotest' app on your cluster, to test the lot!!"
-	echo
 }
 
 
@@ -2882,7 +2917,6 @@ yakko-ops-operations() {
 				if [ "$NEWPASSWORD" != "$CONFIRMPASSWORD" ]
 				then
 					echo "Passwords didn't match! Exiting..."
-					echo
 					cleanup-and-exit
 				fi
 			else
@@ -2944,12 +2978,9 @@ yakko-ops-operations() {
 
 			echo
 			echo "It may take a while for this change to become effective."
-				echo
-			echo
 	
 		else
 			echo "Local passwords have already been enabled."
-			echo
 		fi
 	fi
 
@@ -2983,7 +3014,6 @@ yakko-ops-operations() {
 			if [ "$NEWPASSWORD" != "$CONFIRMPASSWORD" ]
 			then
 				echo "Passwords didn't match! Exiting..."
-				echo
 				cleanup-and-exit
 			fi
 		else
@@ -2998,16 +3028,11 @@ yakko-ops-operations() {
 		${OCCOMMAND} adm policy add-cluster-role-to-user self-provisioner $NEWUSER
 		check-for-error-and-exit $? "Could not assign self-provisioner role to $NEWUSER" 
 
-		echo
-		echo "It may take a while for this change to become effective."
-		echo
-
 		rm ${HTPASSWDFILE} >/dev/null 2>&1
 
 		echo
 		echo "Success: added user [$NEWUSER] and assigned self-provisioner role."
 		echo "It may take a few moments before you can login."
-		echo
 	fi
 
 	if [ "${OPTION}" == "userdelete" ]
@@ -3039,7 +3064,6 @@ yakko-ops-operations() {
 		else
 			echo "User [$DELUSER] not found in OCP, could not delete."	
 		fi
-		echo
 	fi
 		
 	if [ "${OPTION}" == "localregistry" ]
@@ -3054,7 +3078,6 @@ yakko-ops-operations() {
 		then
 			echo "Local Registry is already configured!"
 		        echo "But can be replaced with NFS - yakko ops nfsregistry"
-			echo
 			cleanup-and-exit
 		fi
 
@@ -3100,7 +3123,7 @@ yakko-ops-operations() {
 
 				if [ $(check-registry-type) == local ]
 				then
-					print-in-colour green "Local registry is now operational"
+					print-in-colour green "Local registry is now enabled. Check 'oc get co' to observe operator progress"
 					break
 				fi
 			done
@@ -3109,7 +3132,6 @@ yakko-ops-operations() {
 			then
 				print-in-colour red "Local registry is NOT operational - check image-registry pod in namespace openshift-image-registry"
 			fi
-			echo
 		fi
 	fi
 
@@ -3125,7 +3147,6 @@ yakko-ops-operations() {
 		then
 			echo "NFS Registry is already configured!"
 			echo "To replace it, move the registry to local - yakko ops localregistry"
-			echo
 			cleanup-and-exit
 		fi
 
@@ -3202,8 +3223,6 @@ yakko-ops-operations() {
 			then
 				print-in-colour red "NFS Mount for registry is NOT operational - check image-registry pod in namespace openshift-image-registry"
 			fi
-
-			echo
 		fi
 	fi
 
@@ -3318,7 +3337,6 @@ yakko-ops-operations() {
 			echo "This will mount your share on /var/www/html of the pod - create an index.html file in your share!"
 			echo "You can also issue 'oc get pods <namespace>' and then 'oc rsh nfspod'"
 			echo "Once in the pod, simply call 'mount' and you should see your NFS mount there"
-			echo
 		fi
 	fi
 
@@ -3388,7 +3406,6 @@ yakko-ops-operations() {
                 if [ -z "${CURRENTNODES}" ]
                 then
                         echo "There are no worker/infra nodes defined, nothing to change!"
-                        echo
                         cleanup-and-exit
                 fi
 
@@ -3396,7 +3413,6 @@ yakko-ops-operations() {
 		if [ -z "$(${OCCOMMAND} get nodes | grep "^node-" | awk '{print $1, $3}')" ]
 		then
 			echo "There are no nodes available for relabeling!"
-			echo
 			cleanup-and-exit
 		fi
 
@@ -3445,8 +3461,6 @@ yakko-ops-operations() {
 		else
 			echo "No changes were made./"
 		fi
-		echo
-	
 	fi
 
 	if [ "${OPTION}" == "ingresscert" ]
@@ -3466,7 +3480,6 @@ yakko-ops-operations() {
 			if [ ! -r ${CERTBUNDLEFILE} ]
 			then
 				echo "$1 is not a valid certificate bundle - check file and permissions!"
-				echo
 				cleanup-and-exit
 			fi
 		else
@@ -3498,7 +3511,6 @@ yakko-ops-operations() {
 			if [ $? -ne 0 ]
 			then
 				echo "Exiting. Just run this command again when all requirements are met."
-				echo
 				cleanup-and-exit
 			fi
 			echo
@@ -3569,8 +3581,6 @@ yakko-ops-operations() {
 		echo "      - change 'name:' field to \"\" "
 		echo "      - save changes"
 		echo "      - oc describe co/network should show an error message that describes the issue"
-		echo
-
 	fi
 
 	# VERSION 1.1 - Approve outstanding CSRs
@@ -3607,7 +3617,6 @@ yakko-ops-operations() {
 			echo
 			echo "There are no pending CSRs to approve"
 		fi
-		echo
 	fi
 
 	if [ "${OPTION}" == "yakkotest" ]
@@ -3622,7 +3631,6 @@ yakko-ops-operations() {
 		then
 			echo "Cannot deploy YAKKO test app as there is no registry defined."
 			echo "First, run 'yakko ops localregistry' or 'yakko ops nfsregistry'"
-			echo
 			cleanup-and-exit
 		fi
 
@@ -3642,7 +3650,6 @@ yakko-ops-operations() {
 		echo "Inspect progress by issuing 'oc get pods -n yakkotest'"
 		echo
 		echo "Once yakkotest is up, point your browser to: http://$(${OCCOMMAND} get routes | grep yakkotest | awk '{print $2}')"
-		echo
 	fi
 		
 	cleanup-and-exit
@@ -3808,7 +3815,8 @@ process-stage-virtualnetwork() {
 		
 					# There's a 14 character limit for the virtual bridge name!
 					#echo "	<bridge name='virbrocp' stp='on' delay='0'/>"
-					echo "  <bridge name='yakko-${CLUSTERNAME:0:8}' stp='on' delay='0'/>"
+					#echo "  <bridge name='yakko-${CLUSTERNAME:0:8}' stp='on' delay='0'/>"
+					echo "  <bridge name='yko$(echo ${BASENETWORK}|cut -f3 -d.)${CLUSTERNAME:0:8}' stp='on' delay='0'/>"
 		
 					echo "	<domain name='${CLUSTERFQDN}' localOnly='yes'/>"
 					echo "	<dns>"
@@ -3865,6 +3873,11 @@ process-stage-virtualnetwork() {
 				echo ONE DAY...
 			fi
 			
+			# Discovered this with RHEL 9 on 07/07/22
+			# error: Failed to define network from  ...networkname.xml...
+			# error: Failed to connect socket to '/var/run/libvirt/virtnetworkd-sock': Connection refused			
+			systemctl restart virtnetworkd.socket > /dev/null # Discovered an issue with RHEL 9
+
 			echo Defining network at $NETWORKXML
 			virsh net-define --file $NETWORKXML
 			check-for-error-and-exit $? "Error defining virtual network at $NETWORKXML. Check 'virsh net-list --all'"
@@ -3892,7 +3905,6 @@ process-stage-virtualnetwork() {
 		# We didn't remove libvirtd but we will give it a kick as this has 
 		# caused trouble before with the virtual network
 		systemctl restart libvirtd
-
 	}
 }
 
@@ -4099,6 +4111,27 @@ process-stage-haproxy() {
 		ask-user "Configure Load Balancer (HA Proxy) for cluster bootstrap and operation" "Y" && {
 
 			install-package-if-missing haproxy
+
+
+			ss -tunlp | grep LISTEN | grep ":80 " > /dev/null 2>&1
+			PORT80USED=$?
+
+			ss -tunlp | grep LISTEN | grep ":443 " > /dev/null 2>&1
+			PORT443USED=$?
+
+			if [ $PORT80USED -eq 0 ]
+			then
+				echo "ATTENTION: Port 80 is in use. Port 80 is required by HAproxy for OpenShift."
+			fi
+			if [ $PORT443USED -eq 0 ]
+			then
+				echo "ATTENTION: Port 443 is in use. Port 443 is required by HAproxy for OpenShift."
+			fi
+			if [ $PORT80USED -eq 0 -o $PORT443USED -eq 0 ]
+			then
+				echo "           YAKKO cannot continue until you make ports 80 and 443 available"
+		     		cleanup-and-exit
+			fi		
 	
 			cat /etc/httpd/conf/httpd.conf | grep "^Listen 80" >/dev/null 2>&1
 			[ $? -eq 0 ] && {
@@ -4109,10 +4142,11 @@ process-stage-haproxy() {
 					# CHANGE TO END USER SYSTEM HERE
 					# THIS IS NOT DONE on STUBFILES as it is permanent
 					sed -i "/^Listen 80/c\# Listen 80" /etc/httpd/conf/httpd.conf  2>/dev/null
+					echo "Added a comment tag '# Listen 80' at /etc/httpd/conf/httpd.conf"
+					echo
 				else
 					echo
 					echo "ERROR: Cannot continue until PORT 80 is freed up for HAPROXY. Fix and come back! Exiting..."
-					echo
 					cleanup-and-exit
 				fi
 			}
@@ -4499,7 +4533,7 @@ process-stage-firewall() {
 				firewall-cmd --add-service=dns --permanent
 
 				# Courtesy of Richard Hailstone - this to be a part of 4.21+
-				echo "Changing firewall port for NFS / external access"
+				echo "Changing firewall port(s) for NFS / external access"
                                 firewall-cmd --add-service=nfs --permanent
                                 firewall-cmd --add-service=mountd --permanent
                                 firewall-cmd --add-service=rpc-bind --permanent
@@ -4996,23 +5030,29 @@ process-stage-waitforocpinstalltocomplete() {
 			kill -s SIGTERM $CSRAPPROVALPID $PROMETHEUSPID > /dev/null 2>&1
 			sleep 15
 
-			echo
-			echo ${SEPARATIONLINE}
-			echo
-			print-in-colour ${YAKKOTEXTCOLOR}  FINISHED OCP INSTALLATION - $(date)
-			print-time-elapsed
-
 			if [ $OCPINSTALLCODE -ne 0 ]
 			then
+				echo
+				echo ${SEPARATIONLINE}
+				echo
+
+				print-in-colour red  OCP INSTALLATION FAILED - $(date)
 				echo 
 				print-in-colour red "The OCP Installer exited with code [ $OCPINSTALLCODE ]"
 				echo Cluster has $(${OCCOMMAND} get nodes | grep -Ec "worker|master") nodes and $(${OCCOMMAND} get co | awk '{ print $3 }' | grep -c True) operators up 
 				echo
 				print-in-colour red "You may want to start the installation again. YAKKO will not mark this cluster complete until the OCP installer exits cleanly."
 				echo
-		
 			else
+				# Create the final HAPROXY config file
+				echo "Updating HAProxy configuration..."
+				update-haproxy-config-file 
 
+				print-in-colour ${YAKKOTEXTCOLOR} ${SEPARATIONLINE}
+				echo
+
+				print-in-colour ${YAKKOTEXTCOLOR}  FINISHED OCP INSTALLATION - $(date)
+				print-time-elapsed
 				# We write the first time we believe the cluster was up, for reference
 				# It will also let's us know that there is no further building possible
 
@@ -5155,6 +5195,8 @@ process-stage-gatherclusterconfiguration() {
 			echo
 			cat .lastyakkobuild
 			source ${LASTBUILDCONFIG}
+			# This will be necessary later and no point in saving an individual value
+			OCPINSTALLMINORVERSION=$(echo ${OCPGETCLIENTVERSION}|cut -f2 -d.)
 		else
 			# THIS SECTION IS ALL ABOUT QUESTIONS 
 			#questions
@@ -5243,18 +5285,18 @@ process-stage-gatherclusterconfiguration() {
 			# The user can change it or deal with it ;)
 			# This also takes care of potential duplicates in mac addresses
 
-			BASENETWORK=140
+			BASENETWORKNUM=140
 			while true
 			do
 				for DEFINEDBASENET in $(virsh -q net-list --all | awk '{print $1}')
 		       		do 
 					virsh net-dumpxml $DEFINEDBASENET | grep range | cut -f2 -d= | cut -f2 -d\'
-				done  | grep 192.168.$BASENETWORK > /dev/null 2>&1
+				done  | grep 192.168.${BASENETWORKNUM} > /dev/null 2>&1
 				if [ $? -eq 0 ]
 				then
-					BASENETWORK=$((BASENETWORK+1))
+					BASENETWORKNUM=$((BASENETWORKNUM+1))
 				else
-					BASENETWORK=192.168.$BASENETWORK
+					BASENETWORK=192.168.${BASENETWORKNUM}
 					break
 				fi
 			done
@@ -5710,12 +5752,12 @@ process-stage-gatherclusterconfiguration() {
 		fi
 
 		# We write a bunch of stuff for later retrieval in $YAKKODEFAULTS
-		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}
+		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}-${CLUSTERDOMAIN}
 		STUBFILES=${CLUSTERSETUPDIR}/stubfiles
 		mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
 		mkdir ${STUBFILES} > /dev/null 2>&1
 
-		NETWORKNAME=net-${YAKKONAME}-${CLUSTERNAME}
+		NETWORKNAME=net-${YAKKONAME}-${CLUSTERNAME}-${CLUSTERDOMAIN}
 		NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml
 		CLUSTERFQDN=${CLUSTERNAME}.${CLUSTERDOMAIN}
 		CLUSTERWEBURL="https://console-openshift-console.apps.${CLUSTERFQDN}"
@@ -5725,11 +5767,11 @@ process-stage-gatherclusterconfiguration() {
 		OCPSSHKEY=~/.ssh/id_rsa_ocp.${CLUSTERNAME}
 
 		# These are files that will be placed in the right place on cluster boot, SYSTEMSTUBFILE_*
-		SYSTEMSTUBFILE_DNSMASQ=/etc/NetworkManager/dnsmasq.d/yakko-${CLUSTERNAME}-dnsmasq.conf
-		SYSTEMSTUBFILE_HAPROXY=/etc/haproxy/conf.d/yakko-${CLUSTERNAME}-haproxy.cfg
-		SYSTEMSTUBFILE_NETWORKMANAGER=/etc/NetworkManager/conf.d/yakko-${CLUSTERNAME}-NetworkManager.conf
-		SYSTEMSTUBFILE_HTTPD=/etc/httpd/conf.d/yakko-${CLUSTERNAME}-httpd.conf
-		SYSTEMSTUBFILE_RESOLVED="/etc/systemd/resolved.conf.d/yakko-${CLUSTERNAME}-resolved.conf"
+		SYSTEMSTUBFILE_DNSMASQ=/etc/NetworkManager/dnsmasq.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-dnsmasq.conf
+		SYSTEMSTUBFILE_HAPROXY=/etc/haproxy/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-haproxy.cfg
+		SYSTEMSTUBFILE_NETWORKMANAGER=/etc/NetworkManager/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-NetworkManager.conf
+		SYSTEMSTUBFILE_HTTPD=/etc/httpd/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-httpd.conf
+		SYSTEMSTUBFILE_RESOLVED="/etc/systemd/resolved.conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-resolved.conf"
 
 		# We calculate the BASEMACADDRESS last digit here...
 		# This in case there is more than one cluster defined... Maybe...
@@ -5841,7 +5883,6 @@ then
     	echo "This is free software and comes with ABSOLUTELY NO WARRANTY."
 	echo "You are welcome to redistribute it under certain conditions." 
 	echo "Feel free to post comments via GitHub - https://github.com/ozchamo/YAKKO"
-	echo
 
 	cleanup-and-exit
 fi
@@ -5849,7 +5890,6 @@ fi
 if [ $(whoami) != 'root' ]
 then 
 	echo "ATTENTION: You must be user <root> to run ${YAKKONAME}"
-	echo
 	cleanup-and-exit
 fi
 
@@ -5887,9 +5927,7 @@ then
 	print-in-colour blue  "Calling 'yakko ops' (with no optiona) will always remind you of the following:"
 	print-yakko-ops-operations-menu
 	echo "Finally, you can call 'yakko version' at any time for... well, version!"
-	echo
 	cleanup-and-exit
-	echo
 fi
 
 
@@ -5963,7 +6001,6 @@ then
 
 	echo
 	echo "${YAKKONAME} is now installed. Run again from directory [${RESPONSE}] to continue!"
-	echo
 	cleanup-and-exit
 fi
 
@@ -6002,7 +6039,6 @@ then
 	echo "  - Each YAKKO directory keeps its own images, so be sure to purge accordingly"
 	echo
 	echo "Done - change directory to [${NEWYAKKODIRECTORY}] to start installing your new cluster!"
-	echo
 	cleanup-and-exit
 fi
 
@@ -6022,6 +6058,11 @@ then
 	yakko-infra-operations purgedownloads
 fi
 	
+if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == describehw ) || "${YAKKOCALLOPTION}" == describehw ]]
+then
+	yakko-infra-operations describehw
+fi
+
 if [ ! -r ${CLUSTERCONFIGFILE} ]
 then
 
@@ -6030,7 +6071,6 @@ then
 	then
 		echo "There is no cluster configured but KUBECONFIG is already set." 
 		echo "To run up a new cluster, first 'unset KUBECONFIG'"
-		echo
 		cleanup-and-exit
 	fi
 
@@ -6051,13 +6091,11 @@ then
 			else
 				echo
 				echo "You can't rebuild a prior cluster config since there is no known configuration stored"
-				echo
 				cleanup-and-exit
 			fi
 		else
 			echo
 			echo "No cluster is configured. To begin, just run \"${YAKKONAME}\"." 
-			echo
 			cleanup-and-exit
 		fi
 
