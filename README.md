@@ -9,12 +9,20 @@
 There are plenty of cookbooks out there and they require that you do a lot of *manual* work. **YAKKO avoids it!** If you are a Linux tinkerer with a penchant for the command line and all things Red Hat/Fedora, YAKKO might just be that new friend you were looking for to play with Kubernetes.
 
 ---
+
+## ATTENTION OPENSHIFT 4.11.x!!! (01-Sep-2022)
+OpenShift 4.11.x is still being test. There may be an issue with the installer when building single-master/multi-worker configurations. If this is your target architecture, start with a single master and then add further nodes using "yakko infra addnode".  
+
+What's working so far?
+- SNO - Single Node OpenShift 
+- 3 Master configurations seem to work well.  
+  
+Stay tuned - when 4.11 fully works YAKKO is getting a small upgrade!                    
+ 
 ## CURRENT VERSION: 4.22 (20220711.2005)
 What's new? 
 - Tested on RHEL 8.5, 8.6 and 9.0 (Yes!) and of course, Fedora 35 & 36
 - Tested with OCP 4.10 and 4.11 Nightly 
-  NOTE 31-Aug-2022: OCP 4.11.x does not seem to work, a bug in the installer?
-                    I will update this note once cleared!
 - Improved reporting of existing cluster status 
   (Takes into consideration if you are not a kube admin)
 - Improved network mobility (read laptop users!) and adapting to IP address changes
