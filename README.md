@@ -11,7 +11,7 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 ---
 
 ## ATTENTION OPENSHIFT 4.11.x!!! (01-Sep-2022)
-OpenShift 4.11.x is still being test. There may be an issue with the installer when building single-master/multi-worker configurations. If this is your target architecture, start with a single master and then add further nodes using "yakko infra addnode".  
+OpenShift 4.11.x is still being tested. There may be an issue with the installer when building single-master/multi-worker configurations. If this is your target architecture, start with a single master and then add further nodes using "yakko infra addnode".  
 
 What's working so far?
 - SNO - Single Node OpenShift 
