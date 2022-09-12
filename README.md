@@ -11,7 +11,7 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 ---
 
 ## ATTENTION OPENSHIFT 4.11.x!!! (01-Sep-2022)
-OpenShift 4.11.x is still being tested. There may be an issue with the installer when building single-master/multi-worker configurations. If this is your target architecture, start with a single master and then add further nodes using "yakko infra addnode".  
+OpenShift 4.11.x is still being tested. There may be an issue with the installer when building single-master/multi-worker configurations. If this is your target architecture, start with a single master and then add further nodes using "yakko infra addnode". 
 
 What's working so far?
 - SNO - Single Node OpenShift 
@@ -19,7 +19,7 @@ What's working so far?
   
 Stay tuned - when 4.11 fully works YAKKO is getting a small upgrade!                    
  
-## CURRENT VERSION: 4.22 (20220711.2005)
+## CURRENT VERSION: 4.30 (20220912.1809)
 What's new? 
 - Tested on RHEL 8.5, 8.6 and 9.0 (Yes!) and of course, Fedora 35 & 36
 - Tested with OCP 4.10 and 4.11 Nightly 
