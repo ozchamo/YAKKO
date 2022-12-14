@@ -10,7 +10,7 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 4.40 (20221215.0208)
+## CURRENT VERSION: 4.41 (20221215.0217)
 What's new? 
 - Tested on RHEL 9.1 and Fedora 36 (see note below about Fedora 37) 
 - Tested with OCP 4.11 (SNO and multi-master/multi-node configs, all problems gone)
