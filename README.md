@@ -10,33 +10,23 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## ATTENTION OPENSHIFT 4.11.x!!! (01-Sep-2022)
-OpenShift 4.11.x is still being tested. There may be an issue with the installer when building single-master/multi-worker configurations. If this is your target architecture, start with a single master and then add further nodes using "yakko infra addnode". 
-
-What's working so far?
-- SNO - Single Node OpenShift 
-- 3 Master configurations seem to work well.  
-  
-Stay tuned - when 4.11 fully works YAKKO is getting a small upgrade!                    
- 
-## CURRENT VERSION: 4.30 (20220912.1809)
+## CURRENT VERSION: 4.40 (20221215.0208)
 What's new? 
-- Tested on RHEL 8.5, 8.6 and 9.0 (Yes!) and of course, Fedora 35 & 36
-- Tested with OCP 4.10 and 4.11 Nightly 
-- Improved reporting of existing cluster status 
-  (Takes into consideration if you are not a kube admin)
-- Improved network mobility (read laptop users!) and adapting to IP address changes
-- Should be backwards compatible to 4.1 
-- MANY MANY MANY other little improvements and fixes under the hood
+- Tested on RHEL 9.1 and Fedora 36 (see note below about Fedora 37) 
+- Tested with OCP 4.11 (SNO and multi-master/multi-node configs, all problems gone)
+- Added a "describehw" infra option so that you can get a summary of your system hardware
+- Added an "installcomplete" infra option in case a cluster is not fully recognised as built
+  (Any operator issues? Feel free to fix along the way)
+- Little improvements and fixes under the hood (in particular with HAProxy issues and RHEL 9.1)
 
-And this builds on 4.0 and 4.1:
-- Support for OpenShift 4.10 and single node/single master clusters
+And some of the cool features that have been there a for a while...
+- Adapt to changes in the IP address of the server (e.g. when changing wireless networks!)
+- Support for single node/single master clusters since OpenShift 4.10
 - Support for installing multiple clusters (but run one at a time!)
 - Support for resizing (master/worker) node RAM - on the go!
 - Setting up NFS shares for registry and for Namespace/Project storage on your server
 - Assigning NFS shares for registry and for Namespace/Project storage 
 - Purging existing downloaded OpenShift images on disk
-- Adapt to changes in the IP address of the server (e.g. when changing wireless networks!)
 - List services and files that are in use by a cluster
 ---
 ## INTRODUCTION
@@ -58,7 +48,7 @@ In a nutshell, what does YAKKO do?
 - Sets up and installs any and all requirements/dependencies for you
 - Installs OpenShift in a configuration of your choice:
   - Single-node cluster
-  - Single-master cluster
+  - Single-master cluster (with multiple workers)
   - 3-master cluster with or without worker nodes
   - Add worker nodes, on initial build or later
 - Builds automatically or in stages
@@ -81,7 +71,7 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 ## REQUIREMENTS
 **A single PC/server with:**
 - Access to the internet
-- RHEL or Fedora as the base installed operating system ("Server with GUI" and then YAKKO gives you a working cluster)
+- RHEL/Fedora as the base installed operating system ("Server with GUI" and then YAKKO gives you a working cluster)
 - Ports 80 and 443 available (to pass through to your applications in OpenShift)
 - 16GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB. I've succeed with as little as 12GB, used for a Single Node Cluster setup)
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
@@ -93,12 +83,17 @@ It is not a management tool for OpenShift. It has a small overlay of features to
     - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE
 
 **Tested combinations to date with this release:**
-- RHEL 8.5, 8.6, 9.0
-- Fedora 35, 36
-- OpenShift 4.10 (and 4.11 nightly)
+- OpenShift 4.11
+- RHEL 9.1 and Fedora 36 
+- NOTE: Fedora 37 users - tested with F37 and it's presenting issues. Some operators do not come up all the way
+        and dnsmasq seems to consume a lot of CPU.
+        You can use "yakko infra installcomplete" to mark an unfinished install as 'complete' by YAKKO. 
+        After that, you can tinker as necessary - if you figure it out, let me know! (but I haven't given up.) 
 
 **What's the test bed**  
-The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 250 OpenShift clusters with YAKKO! And my "prod" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 with 64GB RAM and 8c/16t). And no, I have never used spinning disk, if you do, I wish you luck.
+The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 300 OpenShift clusters with YAKKO! This system has Fedora 37, which is still undergoing issues with some operators not fully coming up. Fedora 36 is tested in a VM with nestde virtualisation.
+The current "prod" system is an Intel NUC with a i9 8-core CPU, 64GB RAM, running RHEL 9.1
+And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 with 64GB RAM and 8c/16t). And no, I have never used spinning disk, if you do, I wish you luck.
   
 **Nice to Haves**
 - Linux skills - if you are even attempting at using this, you must have some already...
@@ -128,18 +123,17 @@ The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.20)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.40)
 __________________________________________________________________________
 
- CLUSTER: test.home  (Ver: 4.10.15  Built: 26-May-2022@09:14:53)
+ CLUSTER: test.home  (Ver: 4.11.17  Built: 10-Dec-2022@10:12:53)
 
                state      
  Web Console:  [ ✔ ]  https://console-openshift-console.apps.test.home
- API Endpoint: [ ✔ ]  https://api.test.home:6443
- API Service:  [ ✔ ] 
+ API Service:  [ ✔ ]  https://api.test.home:6443
 
  Active Masters:   3/3
- Active Nodes:     0/0 (workers/infra)
+ Active Nodes:     2/2 (workers/infra)
  Active Operators: 32/32
 
  Administrator: kubeadmin
@@ -167,7 +161,7 @@ The best and quickest way to understand the YAKKO idiosyncrasy is by reading the
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.20)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.40)
 __________________________________________________________________________
 
 When NO CLUSTER is configured you can call: 
@@ -222,9 +216,11 @@ OPTION is one of:
     - changeaccess    ->  Enable/disable OpenShift access by other clients in your network  
     - restartservices ->  Restart supporting services for cluster (virt network/HAproxy/libvirtd)
     - listresources   ->  Print a summary of services and files in use by the (YAKKO) cluster
+    - describehw      ->  Describe the harware supporting the installation
     - resizeram       ->  Change the RAM size of a node
     - purgedownloads  ->  Delete all downloaded OpenShift images on disk
     - nfsshare        ->  Setup a directory as NFS share for creating a PVC for registry or NS store
+    - installcomplete ->  Mark a cluster build as completed even if the installer refuses to say it is
     - deletecluster   ->  Delete entire cluster and all infrastructure  
 ```
 <br>

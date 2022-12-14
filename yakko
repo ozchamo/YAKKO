@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=4.30
-YAKKODATE=20220912.1809
+YAKKOVERSION=4.40
+YAKKODATE=20221215.0208
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -18,9 +18,17 @@ YAKKODATE=20220912.1809
 # https://forum.linuxfoundation.org/discussion/861364/lab-20-1-2-not-working
 ###########################################################################
 
+###########################################################################
+# FEDORA 37 issues
+# - dnsmasq consuming too much CPU
+# - haproxy fails to load conf.d file so need to use /etc/haproxy/haproxy.cfg
+# - cluster comes up with 3 operators with issues, in particular ingress:
+#   The "default" ingress controller reports Degraded=True: DegradedConditions: One or more other status conditions indicate a degraded state: CanaryChecksSucceeding=False (CanaryChecksRepetitiveFailures: Canary route checks for the default ingress controller are failing)
+###########################################################################
+
 
 # This will be checked always on install
-TESTEDPLATFORMS="fedora 35, fedora 36, rhel 8.5, rhel 8.6 and rhel 9.0"
+TESTEDPLATFORMS="rhel 9.1 and fedora 36"
 
 ##########################################################################
 # DESIRED FEATURES:
@@ -33,8 +41,8 @@ TESTEDPLATFORMS="fedora 35, fedora 36, rhel 8.5, rhel 8.6 and rhel 9.0"
 MASTERNODECOUNT=3  # Unless instructed otherwise, OCP 4.8+
 MASTERVCPUS=4      # Recommended 4
 WORKERVCPUS=2      # Recommended 2
-MASTERDISKSIZE=30  # Disk image size for master, GB
-WORKERDISKSIZE=20  # Disk image size for worker, GB
+MASTERDISKSIZE=50  # Disk image size for master, GB
+WORKERDISKSIZE=50  # Disk image size for worker, GB
 MAXNODEVCPUS=4     # Max number of allowable CPUs for a worker node
 MAXWORKERNODES=5   # Max number of worker nodes allowed at cluster BUILD time, after that, no limit 
 REDUCEPROMETHEUS=N # Prometheus pod RAM can be reduced, which makes sense, change to N if not desired. 
@@ -76,7 +84,7 @@ DELETECLUSTERFORCE=1
 ADDNODETIMEOUT=900 # If I cannot add a node within timeout (this multiplied by number of nodes)
 KUBEADMIN=kubeadmin # once deleted this is stored as "" in CLUSTERCONFIGFILE
 PAUSEFORCONFIGEDIT=1
-VNCPORT=5905 # We'll leave the firt few ports open for traditional VNC uses
+VNCPORT=5920 # We'll leave the firt few ports open for traditional VNC uses
 BOOTSTRAPWAITTIME=120 # Time to wait after bootstrap has finished and we delete the resource
 
 # Some parameter options
@@ -459,7 +467,11 @@ get-yakko-host-ip() {
 	# "" is used only during QUESTIONS
 
 	NOTIFYCHANGE=$1
-	for PHYSICALNWPORT in $(ls -l /sys/class/net/ | grep -v virtual | grep -v total | awk '{print $9}')
+	# Post 4.30 added an additional lookup for 'bond' after Gavin Lukin (thanks!) 
+	# and OCP Virt training showed need for 'bond' interfaces
+	# for PHYSICALNWPORT in $(ls -l /sys/class/net/ | grep -v virtual | grep -v total | awk '{print $9}')
+	for PHYSICALNWPORT in $(ls -l /sys/class/net/ | grep -v virtual | grep -v total | awk '{print $9}') $(ls -l /sys/class/net/ | grep bond | awk '{print $9}')
+
 	do
 		for CONNECTEDNWPORT in $(ip -br -4 addr show | grep UP |awk '{print$1}')
 		do
@@ -617,15 +629,23 @@ get-node-list() {
 pick-a-node() {
 
 	# Call: pick-a-node <string-to-display-for-chooser-query>
-	while true
-	do
-		echo "Available nodes for this action are:"
-		get-node-list active print
-		echo
-		echo -n "$1: "
-		read NODENAME
-		[ $? -eq 0 ] && break
-	done
+	#
+	if [ $(($MASTERNODECOUNT + $WORKERNODECOUNT)) -eq 1 ]
+	then
+		# This is a SNO, no need to offer a pick
+		get-node-list active 
+		NODENAME=$(echo ${NODELIST} | tr -d " ")
+	else
+		while true
+		do
+			echo "Available nodes for this action are:"
+			get-node-list active print
+			echo
+			echo -n "$1: "
+			read NODENAME
+			[ $? -eq 0 ] && break
+		done
+	fi
 }
 	
 
@@ -893,7 +913,7 @@ build-ocp-node() {
 		virt-install \
 			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
 			--vcpus ${NODEVCPUS} \
-			--cpu host \
+			--cpu host,+vmx \
 			--disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
 			--install kernel=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-live-kernel-x86_64,initrd=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-live-initramfs.x86_64.img,kernel_args_overwrite=yes,kernel_args="coreos.inst=yes coreos.inst.install_dev=vda coreos.live.rootfs_url=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-live-rootfs.x86_64.img coreos.inst.image_url=${WEBSERVERURL}/${OCPINSTALLVERSION}/rhcos-metal.x86_64.raw.gz coreos.inst.ignition_url=${WEBSERVERURL}/${IGNITIONFILE} coreos.inst.insecure ip=dhcp rd.neednet=1" \
 			--os-variant=rhel8-unknown \
@@ -1124,8 +1144,8 @@ print-option-header() {
 
 get-cluster-configuration() {
 
-	MASTERCOUNTCONFIG=$(virsh list --all | grep "${CLUSTERFQDN}" | grep master | wc -l)
-	WORKERCOUNTCONFIG=$(virsh list --all | grep "${CLUSTERFQDN}" | grep node | wc -l)
+	MASTERCOUNTCONFIG=$(virsh list --all | grep "${CLUSTERFQDN}" | grep -c master)
+	WORKERCOUNTCONFIG=$(virsh list --all | grep "${CLUSTERFQDN}" | grep -c node)
 
 	if [ -z "${WORKERCOUNTCONFIG}" ]
 	then
@@ -1134,10 +1154,10 @@ get-cluster-configuration() {
 
 	if [ $1 == "print" ]
 	then
-		echo "This cluster has been configured with ${MASTERCOUNTCONFIG} master and ${WORKERCOUNTCONFIG} worker nodes"
+		echo "Cluster [${CLUSTERFQDN}] has been configured with ${MASTERCOUNTCONFIG} master and ${WORKERCOUNTCONFIG} worker nodes"
 		echo
 	else
-		echo "${WORKERCOUNTCONFIG} ${WORKERCOUNTCONFIG}" 
+		echo "${MASTERCOUNTCONFIG} ${WORKERCOUNTCONFIG}" 
 	fi
 }
 
@@ -1293,7 +1313,15 @@ check-if-another-yakko-cluster-running() {
 	[ ! -x /usr/bin/virsh ] && return
 
 	virsh list > /dev/null 2>&1
-        check-for-error-and-exit $? "Cannot communicate to the hypervisor via virsh, that's a showstopper!!!!\n   Although restarting libvirtd may clear the error, a reboot may be required"
+	RESULT=$?
+
+	if [ $RESULT -eq 1 ]
+	then
+		# Looks like virsh cannot connect to libvirtd therefore nothing is running?
+		return 0
+	fi
+
+        check-for-error-and-exit $RESULT "Cannot communicate to the hypervisor via virsh, that's a showstopper!!!!\n   Although restarting libvirtd may clear the error, a reboot may be required"
 
 	if [ -z "${CLUSTERFQDN}" ]
 	then
@@ -1882,6 +1910,7 @@ print-yakko-infra-operations-menu() {
 	echo "    - resizeram       ->  Change the RAM size of a node"
 	echo "    - purgedownloads  ->  Delete all downloaded OCP images on disk"
 	echo "    - nfsshare        ->  Setup a directory as NFS share for creating a PVC for registry or NS store"
+	echo "    - installcomplete ->  Mark a cluster build as completed even if the installer refuses to say it is"
 	echo "    - deletecluster   ->  Delete entire cluster and all infrastructure"
 }
 
@@ -2102,7 +2131,7 @@ yakko-infra-operations() {
 					echo  "Node [${NODE}] is already in \"pause\" state"
 					echo
 				else
-					virsh suspend $NODE  # & will make them stop more or less at the same time...
+					virsh suspend  ${NODE} # & will make them stop more or less at the same time...
 					[ $? -ne 0 ] && { echo  "Failed to suspend node [${NODE}]"; echo; }
 				fi
 			done
@@ -2113,10 +2142,10 @@ yakko-infra-operations() {
 			for NODE in ${NODELIST}
 			do
 				echo "Shutting down: ${NODE}"
-				ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${NODE} sudo shutdown -h 1
+				#4.30+
+				#ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${NODE} sudo shutdown -h 1
+				virsh destroy --graceful ${NODE}
 				[ $? -ne 0 ] && echo "There was a problem with node [${NODE}], you should check the state of the cluster as the shutdown progresses".
-				#exit
-				echo
 			done
 	
 			echo "Shutting down all nodes, please wait a few moments."
@@ -3240,6 +3269,8 @@ yakko-ops-operations() {
 		fi
 
 		ANSWER=N
+		NFSAUTO=N
+
 		if [ "$1" == "" ]
 		then
 			ask-user "Enable NFS registry" "Y" noauto
@@ -3253,33 +3284,39 @@ yakko-ops-operations() {
 				NFSSERVER=$1
 				NFSSHARE=$2
 				NFSCAPACITY=$3
+
+				NFSAUTO=Y
 			fi
 		fi
 
 		if [ "$ANSWER" == 0 -o "$ANSWER" == "Y" -o "$ANSWER" == "y" ]
 		then
-			mount-nfs-share # This populates $NFSSERVE and $NFSHARE
 
-			echo
-			echo "Capacity availability on the selected share will not be tested."
-			while true
-			do
-				echo -n "What capacity should the PVC request have in GiB [100]? "
-				read NFSCAPACITY
-				if [ -z "${NFSCAPACITY}" ] 
-				then
-					NFSCAPACITY=100
-				fi
-				if ! [[ ${NFSCAPACITY} =~ $NUMBERRE ]] ; then
-					echo "Error: Not a number. Try again..."
-					continue
-				fi
-				if [[ ${NFSCAPACITY} -lt 10 ]] ; then
-					echo "That's not very big... up to you!"
-					continue
-				fi 
-				break
-			done
+			if [ "$NFSAUTO" == "N" ]
+			then
+				mount-nfs-share # This populates $NFSSERVE and $NFSHARE
+
+				echo
+				echo "Capacity availability on the selected share will not be tested."
+				while true
+				do
+					echo -n "What capacity should the PVC request have in GiB [100]? "
+					read NFSCAPACITY
+					if [ -z "${NFSCAPACITY}" ] 
+					then
+						NFSCAPACITY=100
+					fi
+					if ! [[ ${NFSCAPACITY} =~ $NUMBERRE ]] ; then
+						echo "Error: Not a number. Try again..."
+						continue
+					fi
+					if [[ ${NFSCAPACITY} -lt 10 ]] ; then
+						echo "That's not very big... up to you!"
+						continue
+					fi 
+					break
+				done
+			fi
 
 			create-nfs-pvc ocpclusterregistry "${NFSSERVER}" "${NFSSHARE}" openshift-image-registry ${NFSCAPACITY} 
 			${OCCOMMAND} patch configs.imageregistry.operator.openshift.io cluster --type json -p='[{"op": "remove", "path": "/spec/storage/emptyDir"}]' >/dev/null 2>&1
@@ -3302,6 +3339,38 @@ yakko-ops-operations() {
 					break
 				fi
 			done
+
+			# Testing the NFS mount is writable
+			# AQUI
+			${OCCOMMAND} project openshift-image-registry
+			REGISTRYPOD=$(${OCCOMMAND} | grep "^image-registry" | awk '{ print $1 }')
+
+			#We test if the docker ir is there
+			${OCCOMMAND} rsh ${REGISTRYPOD} ls /registry/docker > /dev/null 2>&1
+			if [ $? -eq 2 ]
+			then
+				# the docker dir does not exist, this is good because the registry 
+				# will create it with the right permissions
+				echo "Docker directory will be created by the registry operator on NFS mount"
+			else
+				# Ok, the registry is there, 
+				# echo "Docker directory exists already. Testing if it is writable with cluster permissions"
+				${OCCOMMAND} rsh ${REGISTRYPOD} touch /registry/docker/yakko-registry-test > /dev/null 2>&1
+				sleep 1
+				echo
+				if [ $? -eq 0 ]
+				then
+					echo "Docker directory tested OK."
+					${OCCOMMAND} rsh ${REGISTRYPOD} rm /registry/docker/yakko-registry-test > /dev/null 2>&1
+				else
+					echo "NOTE:"
+					echo "Docker directory does not appear writeable."
+					echo "This can happen if you are reusing the mountpoint on a new cluster"
+					echo "as user IDs may be different."
+					echo "TO fix this easily, delete the docker directory on the mountpoint"
+					echo
+				fi
+			fi
 
 			if [ ${COUNTER} -eq 0 ]
 			then
@@ -3327,6 +3396,8 @@ yakko-ops-operations() {
 		echo "    - yakko infra nfsshare"
 
 		ANSWER=N
+		NFSAUTO=N
+
 		if [ "$1" == "" ]
 		then
 			echo
@@ -3340,53 +3411,59 @@ yakko-ops-operations() {
 				ANSWER=Y
 				NFSSERVER=$1
 				NFSSHARE=$2
+				NFSCAPACITY=$3
+				NFSAUTO=Y
 			fi
 		fi
 		echo
 
 		if [ "$ANSWER" == 0 -o "$ANSWER" == "Y" -o "$ANSWER" == "y" ]
 		then
-			mount-nfs-share # This populates $NFSSERVER and $NFSHARE
 
-			echo
-			echo -n "Enter a base name for the persistent volume / claim that will appear in OpenShift: "
-			read PVCNAME
-			echo
-			while true
-			do
-				echo -n "Enter the namespace that you want to map this NFS share to: "
-				read NAMESPACE
+			if [ "$NFSAUTO" == "N" ]
+			then
+				mount-nfs-share # This populates $NFSSERVE and $NFSHARE
 
-				oc get projects | awk '{ print $1 }' | grep ${NAMESPACE} >/dev/null 2>&1
-				if [ $? -ne 0 ]
-				then
-					echo "That namespace (project) does not exist, try again..."
-					echo
-					continue
-				fi
-				break
-			done
-
-			echo
-			echo "Capacity availability on the selected share will not be tested."
-			while true
-			do
-				echo -n "What capacity should the PVC request have in GiB [100]? "
-				read NFSCAPACITY
-				if [ -z "${NFSCAPACITY}" ] 
-				then
-					NFSCAPACITY=100
-				fi
-				if ! [[ ${NFSCAPACITY} =~ $NUMBERRE ]] ; then
-					echo "Error: Not a number. Try again..."
-					continue
-				fi
-				if [[ ${NFSCAPACITY} -lt 10 ]] ; then
-					echo "That's not very big... up to you!"
-					continue
-				fi 
-				break
-			done
+				echo
+				echo -n "Enter a base name for the persistent volume / claim that will appear in OpenShift: "
+				read PVCNAME
+				echo
+				while true
+				do
+					echo -n "Enter the namespace that you want to map this NFS share to: "
+					read NAMESPACE
+	
+					oc get projects | awk '{ print $1 }' | grep ${NAMESPACE} >/dev/null 2>&1
+					if [ $? -ne 0 ]
+					then
+						echo "That namespace (project) does not exist, try again..."
+						echo
+						continue
+					fi
+					break
+				done
+	
+				echo
+				echo "Capacity availability on the selected share will not be tested."
+				while true
+				do
+					echo -n "What capacity should the PVC request have in GiB [100]? "
+					read NFSCAPACITY
+					if [ -z "${NFSCAPACITY}" ] 
+					then
+						NFSCAPACITY=100
+					fi
+					if ! [[ ${NFSCAPACITY} =~ $NUMBERRE ]] ; then
+						echo "Error: Not a number. Try again..."
+						continue
+					fi
+					if [[ ${NFSCAPACITY} -lt 10 ]] ; then
+						echo "That's not very big... up to you!"
+						continue
+					fi 
+					break
+				done
+			fi
 
 			create-nfs-pvc ${PVCNAME} "${NFSSERVER}" "${NFSSHARE}" ${NAMESPACE} ${NFSCAPACITY} 
 
@@ -3555,11 +3632,12 @@ yakko-ops-operations() {
 
 		check-oc-credentials-and-state
 
+		AUTOSETUP=N
 		if [ -n "$1" ]
 		then
-			AUTOSETUP=1
 			CERTBUNDLEFILE=$1
 			CERTBUNDLEPATH=$(dirname $1)
+			AUTOSETUP=Y
 
 			if [ ! -r ${CERTBUNDLEFILE} ]
 			then
@@ -3651,6 +3729,9 @@ yakko-ops-operations() {
 		echo
 
 		${OCCOMMAND} create configmap custom-ca --from-file=ca-bundle.cert=${CERTBUNDLEFILE} -n openshift-config
+
+		## Test on V4.30+
+		#${OCCOMMAND} patch proxy/cluster --type=merge  --patch='{"spec":{"trustedCA":{"name":""}}}'
 		${OCCOMMAND} patch proxy/cluster --type=merge  --patch='{"spec":{"trustedCA":{"name":"custom-ca"}}}'
 		check-for-error-and-exit $? "Unable to apply patched config map in / custom-ca!"
 
@@ -3659,12 +3740,20 @@ yakko-ops-operations() {
 		       	--type=merge -p '{"spec":{"defaultCertificate": {"name": "custom-ca-secret"}}}' -n openshift-ingress-operator
 		check-for-error-and-exit $? "Unable to apply patched private key in / custom ca!"
 
-		echo
-		echo "NOTE: If the 'network' and/or 'machine-config' operator goes into degraded mode, run 'oc edit proxy.config.openshift.io cluster'  and:"
-		echo "      - clear field trustedCA: "
-		echo "      - change 'name:' field to \"\" "
-		echo "      - save changes"
-		echo "      - oc describe co/network should show an error message that describes the issue"
+		if [ "${AUTOSETUP}" == "Y" ]
+		then
+			sleep 60
+			oc patch proxy.config.openshift.io/cluster --type=merge -p '{"spec":{"trustedCA":{"name":""}}}'
+		else
+			# How to patch the file?
+ 			# oc patch proxy.config.openshift.io/cluster --type=merge -p '{"spec":{"trustedCA":{"name":""}}}'
+ 			echo
+ 			echo "NOTE: If the 'network' and/or 'machine-config' operator goes into degraded mode, run 'oc edit proxy.config.openshift.io cluster'  and:"
+ 			echo "      - clear field trustedCA: "
+ 			echo "      - change 'name:' field to \"\" "
+ 			echo "      - save changes"
+ 			echo "      - oc describe co/network should show an error message that describes the issue"
+		fi
 	fi
 
 	# VERSION 1.1 - Approve outstanding CSRs
@@ -4237,15 +4326,23 @@ process-stage-haproxy() {
 				fi
 			}
 	
-			# We defined SYSTEMSTUBFILE_HAPROXY during question time - it will reside in the directory below
-			mkdir -p /etc/haproxy/conf.d
+			systemctl show haproxy | grep "CFGDIR=/etc/haproxy/conf.d" > /dev/null 2>&1
+			if [ $? -ne 0 ]
+			then
+				# After sooo many issues with haproxy and Fedora 37 / RHEL 9.1
+				# small improvement here
+				# conf.d is well defined
 
-			#HAPROXY still wants to find a config file in the default place
-			touch /etc/haproxy/haproxy.cfg
+				# We defined SYSTEMSTUBFILE_HAPROXY during question time - it will reside in the directory below, created if necessary
+				mkdir -p /etc/haproxy/conf.d
+	
+				#HAPROXY still wants to find a config file in the default place, so in case it's empty...
+				touch /etc/haproxy/haproxy.cfg
 
-			#but, we can add others, and we do! As a directory, this will make haproxy load any configs in there...
-			#this does not get blown away on cluster deletion. Tricky.
-			echo "OPTIONS=\"-f /etc/haproxy/conf.d\"" > /etc/sysconfig/haproxy
+				#but, we can add others, and we do! As a directory, this will make haproxy load any configs in there...
+				#this does not get blown away on cluster deletion. Tricky.
+				echo "OPTIONS=\"-f /etc/haproxy/conf.d\"" > /etc/sysconfig/haproxy
+			fi
 
 			# VERSION 1.1 adds opening by default so here we go
 			# This value came from QUESTIONS and is later stored in yakkodefaults
@@ -4696,7 +4793,7 @@ process-stage-generateocpinstallerconfig() {
 				echo "compute:"
 				echo "- hyperthreading: ${HYPERTHREADING}"
 				echo "  name: worker"
-				echo "  replicas: 0"
+				echo "  replicas: ${WORKERNODECOUNT}"
 				if [ ${OCPINSTALLMINORVERSION} -lt 10 ] # This is an OCP 4.10 thing, not sure use case
 				then
 					echo "  skipMachinePools: true"
@@ -5302,7 +5399,6 @@ process-stage-gatherclusterconfiguration() {
 			OCPINSTALLMINORVERSION=$(echo ${OCPGETCLIENTVERSION}|cut -f2 -d.)
 		else
 			# THIS SECTION IS ALL ABOUT QUESTIONS 
-			#questions
 		
 			#This is so that we don't have to update if we add questions :)
 			#We just count the number of calls to the function... Terrible? Cool... 
@@ -5313,6 +5409,8 @@ process-stage-gatherclusterconfiguration() {
 			echo "This section will gather relevant information to build an OpenShift cluster on this host."
 			echo "Default options are in [brackets], press enter to accept them."
 
+			#questions #QUESTIONS start here
+			
 			### QUESTION: domain name ## Stored in YAKKO defaults
 			print-question-separator DOMAIN NAME
 			echo -n "Enter the DOMAIN name to setup your cluster under [\"${CLUSTERDOMAIN}\"]: "
@@ -5859,8 +5957,6 @@ process-stage-gatherclusterconfiguration() {
 					CAPACITYALERT=0
 					continue
 				fi
-				
-
 			done
 		fi
 
@@ -5881,10 +5977,10 @@ process-stage-gatherclusterconfiguration() {
 
 		# These are files that will be placed in the right place on cluster boot, SYSTEMSTUBFILE_*
 		SYSTEMSTUBFILE_DNSMASQ=/etc/NetworkManager/dnsmasq.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-dnsmasq.conf
-		SYSTEMSTUBFILE_HAPROXY=/etc/haproxy/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-haproxy.cfg
 		SYSTEMSTUBFILE_NETWORKMANAGER=/etc/NetworkManager/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-NetworkManager.conf
 		SYSTEMSTUBFILE_HTTPD=/etc/httpd/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-httpd.conf
 		SYSTEMSTUBFILE_RESOLVED="/etc/systemd/resolved.conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-resolved.conf"
+		SYSTEMSTUBFILE_HAPROXY=/etc/haproxy/conf.d/yakko-${CLUSTERNAME}-${CLUSTERDOMAIN}-haproxy.cfg
 
 		# We calculate the BASEMACADDRESS last digit here...
 		# This in case there is more than one cluster defined... Maybe...
