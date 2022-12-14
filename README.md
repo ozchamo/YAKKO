@@ -123,7 +123,7 @@ And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 wit
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.40)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.42)
 __________________________________________________________________________
 
  CLUSTER: test.home  (Ver: 4.11.17  Built: 10-Dec-2022@10:12:53)
@@ -161,7 +161,7 @@ The best and quickest way to understand the YAKKO idiosyncrasy is by reading the
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.40)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.42)
 __________________________________________________________________________
 
 When NO CLUSTER is configured you can call: 
