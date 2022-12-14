@@ -1,7 +1,7 @@
 #!/bin/bash
 
 YAKKOVERSION=4.42
-YAKKODATE=20221215.0219
+YAKKODATE=20221215.0243
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -1030,61 +1030,64 @@ yakko-backup() {
 			echo "Version: DATE stamp updated to [${BACKUPDATE}]"
 			echo
 
-			if [ "${NEWVERSION}" != ${YAKKOVERSION} ]
+			PUSHOPTION=N
+			if [ "${NEWVERSION}" != "${YAKKOVERSION}" ]
 			then
+				PUSHOPTION=Y
 				sed -i "s/YAKKOVERSION=${YAKKOVERSION}/YAKKOVERSION=${NEWVERSION}/" ${YAKKOEXECUTABLE}
 				echo "Version: VERSION stamp updated to [${NEWVERSION}]"
+			fi
 
-				ask-user "Commit new version to GITHUB" Y
+			ask-user "Commit new version to GITHUB" ${PUSHOPTION}
+
+			if [ $? -eq 0 ]
+			then
+				# We change the README.md file
+				sed -i "/## CURRENT VERSION/c\## CURRENT VERSION: ${NEWVERSION} (${BACKUPDATE})" README.md
+
+				# We add changes
+				git add yakko README.md YAKKO-architecture.png
+				echo "'git add' exited with code [$?]"
+				echo
+
+				# We commit them with the same message
+				ask-user "Ready to commit? [Y]" Y
 				if [ $? -eq 0 ]
 				then
-					# We change the README.md file
-					sed -i "/## CURRENT VERSION/c\## CURRENT VERSION: ${NEWVERSION} (${BACKUPDATE})" README.md
-
-					# We add changes
-					git add yakko README.md YAKKO-architecture.png
-					echo "'git add' exited with code [$?]"
+					git commit -m "${BACKUPMSG}"
+				else
+					echo "OK, exiting - did not commit!"
 					echo
-
-					# We commit them with the same message
-					ask-user "Ready to commit? [Y]" Y
-					if [ $? -eq 0 ]
-					then
-						git commit -m "${BACKUPMSG}"
-					else
-						echo "OK, exiting - did not commit!"
-						echo
-						exit
-					fi
-
-					# We push
-					echo
-					echo "Git PWD: $GCLAVE"
-					ask-user "Ready to push? [Y]" Y
-					if [ $? -eq 0 ]
-					then
-						git push -f origin master
-						check-for-error-and-exit $? "Aborting, could not push!"
-					else
-						echo "OK, exiting - did not push!"
-						echo
-						exit
-					fi
-
-					# We tag
-					echo
-					ask-user "Ready to tag? [Y]" Y
-					if [ $? -eq 0 ]
-					then
-						git tag "v${NEWVERSION}"
-						git push --tags
-					else
-						echo "OK, exiting - did not tag!"
-						echo
-						exit
-					fi
-
+					exit
 				fi
+
+				# We push
+				echo
+				echo "Git PWD: $GCLAVE"
+				ask-user "Ready to push? [Y]" Y
+				if [ $? -eq 0 ]
+				then
+					git push -f origin master
+					check-for-error-and-exit $? "Aborting, could not push!"
+				else
+					echo "OK, exiting - did not push!"
+					echo
+					exit
+				fi
+
+				# We tag
+				echo
+				ask-user "Ready to tag? [Y]" Y
+				if [ $? -eq 0 ]
+				then
+					git tag "v${NEWVERSION}"
+					git push --tags
+				else
+					echo "OK, exiting - did not tag!"
+					echo
+					exit
+				fi
+
 			fi
 		fi
 
