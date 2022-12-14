@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=4.41
-YAKKODATE=20221215.0217
+YAKKOVERSION=4.42
+YAKKODATE=20221215.0219
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -1064,6 +1064,7 @@ yakko-backup() {
 					if [ $? -eq 0 ]
 					then
 						git push -f origin master
+						check-for-error-and-exit $? "Aborting, could not push!"
 					else
 						echo "OK, exiting - did not push!"
 						echo
