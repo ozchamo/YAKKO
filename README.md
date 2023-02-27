@@ -10,14 +10,22 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 4.42 (20221215.0243)
+## CURRENT VERSION: 5.00 (20230227.2059)
 What's new? 
-- Tested on RHEL 9.1 and Fedora 36 (see note below about Fedora 37) 
-- Tested with OCP 4.11 (SNO and multi-master/multi-node configs, all problems gone)
-- Added a "describehw" infra option so that you can get a summary of your system hardware
-- Added an "installcomplete" infra option in case a cluster is not fully recognised as built
-  (Any operator issues? Feel free to fix along the way)
-- Little improvements and fixes under the hood (in particular with HAProxy issues and RHEL 9.1)
+
+WHAT, 5.0?!!! WOWZA! WHY?
+- This version rearranges the installation of required packages in preparation for a feature in BETA - the capability of building in disconnected fashion! 
+  (This will require a registry properly configured.)
+- Tested on RHEL 9.1 and Fedora 37 (F37 is all good now) 
+- Added changing of OpenShift installer output verbosity (because sometimes there can be trouble...)
+- Added links to your cluster in console.redhat.com on the 'yakko' text dashboard and on the http service
+- Added a new option "yakko buildcluster" - this allows you to feed a cluster configuration file as the automatic base to build from (the file needs to be in the format that .lastyakkobuild creates after build a cluster). 
+- Tested with OCP 4.12 (SNO and multi-master/multi-node configs)
+- A few bugs cleaned up here and there
+
+What's in the works already? 
+- Disconnected installation (but you knew this already, see above, and wish me luck!)
+- Looking at REMOTE nodes, yes! If only port 4789 wasn't UDP, I'd be done by now. If you want to participate on this, drop me a comment.
 
 And some of the cool features that have been there a for a while...
 - Adapt to changes in the IP address of the server (e.g. when changing wireless networks!)
@@ -75,7 +83,7 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 - Ports 80 and 443 available (to pass through to your applications in OpenShift)
 - 16GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB. I've succeed with as little as 12GB, used for a Single Node Cluster setup)
 - 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
-- 48GB+ for multi-node clusters (3 masters + many workers) with plenty RAM to spare
+- 48GB+ for multi-node clusters (3 masters + a worker or three :) 
 - 2.5GB of disk space for the install files (YAKKO will accumulate older OpenShift versions so keep an eye on the "images" directory within the directory where it resides)
 - SSD class storage with capacity as follows:
     - 3 masters require 90GB (30GB each)
@@ -83,15 +91,11 @@ It is not a management tool for OpenShift. It has a small overlay of features to
     - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE
 
 **Tested combinations to date with this release:**
-- OpenShift 4.11
-- RHEL 9.1 and Fedora 36 
-- NOTE: Fedora 37 users - tested with F37 and it's presenting issues. Some operators do not come up all the way
-        and dnsmasq seems to consume a lot of CPU.
-        You can use "yakko infra installcomplete" to mark an unfinished install as 'complete' by YAKKO. 
-        After that, you can tinker as necessary - if you figure it out, let me know! (but I haven't given up.) 
+- OpenShift 4.12
+- RHEL 9.1 and Fedora 37 
 
 **What's the test bed**  
-The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 300 OpenShift clusters with YAKKO! This system has Fedora 37, which is still undergoing issues with some operators not fully coming up. Fedora 36 is tested in a VM with nestde virtualisation.
+The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 300 OpenShift clusters with YAKKO! This system has Fedora 37, which is still undergoing issues with some operators not fully coming up. 
 The current "prod" system is an Intel NUC with a i9 8-core CPU, 64GB RAM, running RHEL 9.1
 And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 with 64GB RAM and 8c/16t). And no, I have never used spinning disk, if you do, I wish you luck.
   
@@ -123,21 +127,25 @@ And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 wit
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.42)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 5.0)
 __________________________________________________________________________
 
- CLUSTER: test.home  (Ver: 4.11.17  Built: 10-Dec-2022@10:12:53)
+ CLUSTER: cluster.testdomain  (ID: 4c43f198-91ee-424c-a746-c6f73434cb72)
+ Version: 4.12.4  (Built: 26-Feb-2023@14:27:53)
+ @RedHat: https://console.redhat.com/openshift/details/4c43f198-91ee-424c-a746-c6f73434cb72)
 
                state      
- Web Console:  [ ✔ ]  https://console-openshift-console.apps.test.home
- API Service:  [ ✔ ]  https://api.test.home:6443
+ Web Console:  [ ✔ ]  https://console-openshift-console.apps.cluster.testdomain
+ API Service:  [ ✔ ]  https://api.cluster.testdomain:6443
 
  Active Masters:   3/3
  Active Nodes:     2/2 (workers/infra)
- Active Operators: 32/32
+ Active Operators: 33/33 (1 progressing, 0 degraded)
 
  Administrator: kubeadmin
- Password:      kgeVL-yAeE8-rKMpY-u5sKp
+ Password:      DVTGk-Wa85w-yrFQc-cTK6n
+
+ Registry configuration: local
 
  External access: ENABLED (to change: yakko infra changeaccess)
 
@@ -145,9 +153,9 @@ __________________________________________________________________________
  - Make infrastructure changes ----> yakko infra <options>
  - Make operational changes -------> yakko ops <options>
  - Use OpenShift's 'oc' command ---> source ocp-setup-env  (in this shell)
- - Retrieve basic cluster info from a browser: http://192.168.100.2:8080
- - You can access this cluster from another system on your network,
-   just add [192.168.100.2] as a DNS server to that system
+ - Basic cluster info at ----------> http://192.168.100.2:8080
+ - Access cluster externally ------> Add [192.168.100.2] as a DNS server in your clients
+   (This provides an alternative for when configuring DNS in your network is not possible)
 
  NOTE: You did not have KUBECONFIG set when you invoked YAKKO.
        Remember to use 'source ocp-setup-env' or adjust your environment accordingly!
@@ -279,10 +287,10 @@ Short of this being a backlog...
 - Why didn't I use Ansible? 
 I could, I chose not to, because I would have had to learn another TON of stuff. I actually pulled out a couple of lines where I did use it. I wanted this to be ONE script with no additional downloads for code, no dependencies of other scripts. YAKKO is not big scale automation anyway.
 - What if I have two boxes and I want to spread the load?
-I want to cook that too. I have two boxes, Large and medium. My dream is to turn the medium box into a CNV node. Now that remote nodes are supported, that may well be the next step.
+I want to cook that too. I have two boxes, Large and medium. My dream is to turn the medium box into a CNV node. Now that remote nodes are supported, this is in the short term roadmap, success looks promising but not guaranteed!
 - What are the minimum requirements?
-See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  
-- Is it AUTOMATIC?
+See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  (note - Single Node Cluster only on this hardware)
+- Is it AUTOMATIC
 Yes, after you master the basics. Who doesn't want to rebuild OpenShift all the time?
 - Do you have to really deploy HAProxy on the box? 
 It's more than a convenience. HAProxy bridges the virtual network so that both the OpenShift host and other hosts on your network can talk to the cluster in the same way and through the 'public' network.
@@ -295,8 +303,8 @@ It's more than a convenience. HAProxy bridges the virtual network so that both t
 ---
 ## MY OWN EXPERIENCE AND FINAL WORDS
 - YAKKO is a big undertaking. It began as an exercise in curiosity and developed into a fledgling almost-product
-- As I created clusters and then tried things I didn't know how to do, I quicky appreciated having the ease of rebuilding from scratch. I can see my customers taking the same approach! (but be careful of the destruction power of "yakko deletecluster force"!)
-- Kubernetes, with all the ultra-modern design principles of distributed computing and software delivery it promotes, is replacing the face of everything we took for granted in computing: hardware becomes even more commoditised (anything goes, including Raspebrry Pies), virtualisation is turned on its head to become a second (or even third) class citizen (due to CNV - Container Native Virtualisation), dependencies are a thing of the past, resilience is a given, and immutability and statelessness are here to stay for the good of mankind. Kubernetes is the new Operating System (of the datatacentre) and Containers are Linux. Time to learn again.
+- As I created clusters and then tried things I didn't know how to do, I quicky appreciated having the ease of rebuilding from scratch. I can see YAKKO users taking the same approach! (but be careful of the destructive power of "yakko deletecluster force"!)
+- Kubernetes, with all the ultra-modern design principles of distributed computing and software delivery it promotes, is replacing the face of everything we took for granted in computing: hardware becomes even more commoditised (anything goes, including Raspberry Pies), virtualisation is turned on its head to become a second (or even third) class citizen (due to CNV - Container Native Virtualisation), dependencies are a thing of the past, resilience is a given, and immutability and statelessness are here to stay for the good of mankind. Kubernetes is the new Operating System (of the datatacentre) and Containers are Linux. Time to learn again.
 - There will always be people, like me, who hold "self-hosted" as a guiding principle to learn from and... Enjoy!
 
 
