@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=5.00
-YAKKODATE=20230227.2059
+YAKKOVERSION=5.01
+YAKKODATE=20230318.0113
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -74,6 +74,7 @@ OCPVMDISKDIR=/var/lib/libvirt/images
 CLUSTERDOMAIN=localdomain  
 DHCPXMLTMPFILE=/tmp/yakkodhcpxmlline.$$.tmp
 HTPASSWDFILE=/tmp/ocp-htpasswd.$$
+TOKENLOGINFILE=token-login
 
 # Cluster build progression variables
 YAKKOSTAGE=0
@@ -201,7 +202,7 @@ mark-cluster-complete() {
 	
 	OCPINSTALLCODE=$1
 
-	CLUSTERCOMPLETE="\"exitcode ${OCPINSTALLCODE} date $(date +"%d-%b-%Y@%T") hostdir ${YAKKOSETUPDIR} \""
+	CLUSTERCOMPLETE="\"exitcode ${OCPINSTALLCODE} date $(date +"%d-%b-%Y@%T") hostdir ${YAKKODIRECTORY} \""
         echo "CLUSTERCOMPLETE=$CLUSTERCOMPLETE" >> ${CLUSTERCONFIGFILE}
 	echo "CLUSTERCONTEXT=$(${OCCOMMAND} whoami -c)" >> ${CLUSTERCONFIGFILE}
 
@@ -212,15 +213,22 @@ mark-cluster-complete() {
 	compose-html-cluster-report
 	# and dump the login token ;)
 	
-	${OCCOMMAND} login -u kubeadmin -p $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password) --server=https://api.${CLUSTERFQDN}:6443 >/dev/null 2>&1
-	[ $? -eq 0 ] &&
-		echo "oc login --token=$(${OCCOMMAND} whoami --show-token) --server=https://api.${CLUSTERFQDN}:6443" > ${YAKKODIRECTORY}/token-login
+	check-oc-credentials
+	if [ $? -eq 0 ]
+	then
+		${OCCOMMAND} login -u kubeadmin -p $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password) --server=https://api.${CLUSTERFQDN}:6443 >/dev/null 2>&1
+		[ $? -eq 0 ] && {
+			echo "#!/bin/bash" > ${YAKKODIRECTORY}/$TOKENLOGINFILE
+			echo "oc login --token=$(${OCCOMMAND} whoami --show-token) --insecure-skip-tls-verify=false --server=https://api.${CLUSTERFQDN}:6443" >> ${YAKKODIRECTORY}/$TOKENLOGINFILE
+			chmod 700 ${YAKKODIRECTORY}/$TOKENLOGINFILE
+		}
+	fi
 }
 
 
 ################ A FEW REUSABLE FUNCTIONS ################################################
 
-do-remove() {
+do-remove-directory() {
 
 	if [ $# -gt 1 ]
 	then
@@ -533,8 +541,7 @@ get-node-fqdn() {
 }
 
 
-check-node-name()
-{
+check-node-name() {
 	# Quick function to check that user is passing valid yakk nodename
 	# check-node-name CHECKNODENAME [exit]
 
@@ -569,8 +576,7 @@ check-node-name()
 }
 
 
-delete-kvm-machine()
-{
+delete-kvm-machine() {
 	# This is a safety measure...
 	NODETODELETEFQDN=$(get-node-fqdn $1)
 
@@ -581,6 +587,10 @@ delete-kvm-machine()
 	then
 		virsh destroy ${NODETODELETEFQDN} 2>/dev/null #Errors when machine is not running... so what.
 		virsh undefine --domain ${NODETODELETEFQDN} --remove-all-storage
+		if [ $? -ne 0 ]
+		then
+			print-in-colour red "Failed to remove virtual machine ${NODETODELETEFQDN}, please remove manually."
+		fi
 	fi
 
 	if [ $RESULT -eq 1 ]
@@ -659,7 +669,7 @@ get-yakko-host-ip() {
 					fi
 					YAKKOHOSTIP=$RESPONSE
 				else
- 					echo "That's not a valid IP address!"
+ 					echo "ERROR: That's not a valid IP address!"
 					echo
 					continue
 				fi
@@ -1012,7 +1022,9 @@ check-cluster-state() {
 	echo " - See yakko command usage --------> ${YAKKONAME} usage"
 	echo " - Make infrastructure changes ----> ${YAKKONAME} infra <options>"
 	echo " - Make operational changes -------> ${YAKKONAME} ops <options>"
-	echo " - Use OpenShift's 'oc' command ---> source ocp-setup-env  (in this shell)"
+	echo " - Use OpenShift's 'oc' command ---> source ${YAKKODIRECTORY}/ocp-setup-env"
+	[ "$FIRSTCALL" == "Y" ] && 
+		echo " - Use a token based login --------> ${YAKKODIRECTORY}/$TOKENLOGINFILE"
 	echo " - Basic cluster info at ----------> http://${YAKKOHOSTIP}:${WEBSERVERPORT}"
 	if [ ${HAPROXYACCESS} -eq 0 ]
 	then
@@ -1020,20 +1032,12 @@ check-cluster-state() {
 		echo "   (This provides an alternative for when configuring DNS in your network is not possible)"
 	fi
 
-	if [ "$FIRSTCALL" == Y ]
+	if [ -n "${NOTSETKUBECONFIG}" ]
 	then
 		echo
-		echo "NOTE: File 'token-login' contains a token based oc login command for your convenience"
-	else
-		if [ -n "${NOTSETKUBECONFIG}" ]
-		then
-			echo
-			echo " NOTE: You did not have KUBECONFIG set when you invoked YAKKO."
-			echo "       Remember to use 'source ocp-setup-env' or adjust your environment accordingly!"
-		fi
+		echo " NOTE: You did not have KUBECONFIG set when you invoked YAKKO."
+		echo "       Remember to use 'source ocp-setup-env' or adjust your environment accordingly!"
 	fi
-
-
 
 	cleanup-and-exit
 }
@@ -1441,11 +1445,6 @@ check-oc-credentials() {
 	OCPUSER=$(${OCCOMMAND} whoami -c | cut -f3 -d/)
 	CHECKCREDRESULT=$?
 
-	#if [ "$1" == "blankline" ]
-	#then
-	#	blank-line
-	#fi
-	#
 	if [ "$1" == "exit" ]
 	then
 		DOEXIT=Y
@@ -1742,7 +1741,7 @@ purge-downloads() {
 				for OCPDOWNLOADIMAGE in ${OCPDOWNLOADS}
 				do
        	                		echo Deleting ${OCPDOWNLOADIMAGE} 
-					do-remove ${OCPDOWNLOADIMAGE}
+					do-remove-directory ${OCPDOWNLOADIMAGE}
 				done
 				echo Done!
 			fi
@@ -4242,16 +4241,33 @@ process-stage-virtualnetwork() {
 				echo ONE DAY...
 			fi
 			
-			# Discovered this with RHEL 9 on 07/07/22
+			# Discovered this with RHEL 9 on 07/07/22 and it kept nagging until March 1, 2023
+			# Retry a few times, it kicks in?
 			# error: Failed to define network from  ...networkname.xml...
 			# error: Failed to connect socket to '/var/run/libvirt/virtnetworkd-sock': Connection refused			
-			systemctl restart virtnetworkd.socket > /dev/null # Discovered an issue with RHEL 9
-			sleep 3
-			systemctl restart libvirtd > /dev/null # Discovered an issue with RHEL 9
+			# systemctl restart virtnetworkd.socket > /dev/null # Discovered an issue with RHEL 9
+			LOOPVIRTNETSUCCESS=1
+			for LOOPTRY in 1 2 3 4 5
+			do
+				systemctl start virtnetworkd > /dev/null 2>&1  
+				[ $? -eq 0 ] && {
+					LOOPVIRTNETSUCCESS=0
+					break
+				}
+				sleep 5
+			done
+
+			if [ ${LOOPVIRTNETSUCCESS} -eq 1 ]
+			then
+				check-for-error-and-exit 1 "Failed to start virtnetworkd (after 5 tries). Command executed: 'systemctl start virtnetworkd'"
+			fi
+
+			# sleep 3
+			#systemctl restart libvirtd > /dev/null # Discovered an issue with RHEL 9
 
 			echo Defining network at $NETWORKXML
 			virsh net-define --file $NETWORKXML
-			check-for-error-and-exit $? "Error defining virtual network at $NETWORKXML. Check 'virsh net-list --all'"
+			check-for-error-and-exit $? "Could not define virtual network at $NETWORKXML. Check 'virsh net-list --all'"
 			
 			echo Setting network to start on boot...
 			virsh net-autostart ${NETWORKNAME}
@@ -4272,6 +4288,10 @@ process-stage-virtualnetwork() {
 		rollback-stage-progression "Deleting virtual network configuration"
 		virsh net-destroy ${NETWORKNAME} > /dev/null 2>&1
 		virsh net-undefine ${NETWORKNAME} > /dev/null 2>&1
+		if [ $? -ne 0 ]
+		then
+			print-in-colour red "Failed to undefined virtual network ${NETWORKNAME}, please remove manually."
+		fi
 
 		# We didn't remove libvirtd but we will give it a kick as this has 
 		# caused trouble before with the virtual network
@@ -4757,11 +4777,11 @@ process-stage-downloadocpbinaries() {
 	
 				# DOWNLOAD CLIENT STUFF FIRST (as of 4.6 it is common to all versions)
 				wget $OCPDOWNLOADCLIENT/openshift-install-linux.tar.gz -O - | tar xz
-				[ $? -ne 0 ] && { echo "Error downloading *openshift-installer*, exiting..."; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+				[ $? -ne 0 ] && { echo "Error downloading *openshift-installer*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 	
 				echo "Getting the OCP client -> $PWD"
 				wget $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz -O - | tar xz 
-				[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+				[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 			
 				echo "Getting RHCOS installer files... -> $PWD"
 	
@@ -4770,33 +4790,33 @@ process-stage-downloadocpbinaries() {
 			
 					##### KERNEL
 					wget $OCPDOWNLOADIMAGE/rhcos-live-kernel-x86_64
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-kernel*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 				
 					##### INITRAMFS
 					wget $OCPDOWNLOADIMAGE/rhcos-live-initramfs.x86_64.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-initramfs*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 			
 					##### ROOTFS
 					wget $OCPDOWNLOADIMAGE/rhcos-live-rootfs.x86_64.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-rootfs*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-rootfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 			
 					##### METAL
 					wget $OCPDOWNLOADIMAGE/rhcos-metal.x86_64.raw.gz
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 					
 				else # Version 4.5 or earlier
 			
 					##### KERNEL
 					wget $OCPDOWNLOADIMAGE/rhcos-installer-kernel-x86_64
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-kernel*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 				
 					### INITRAMFS
 					wget $OCPDOWNLOADIMAGE/rhcos-installer-initramfs.x86_64.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 			
 					##### METAL
 					wget $OCPDOWNLOADIMAGE/rhcos-metal.x86_64.raw.gz
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove ${OCPVERSION}; cleanup-and-exit; } 
+					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 				fi
 			fi
 
@@ -4807,7 +4827,7 @@ process-stage-downloadocpbinaries() {
 			echo "Using OCP Version $OCPVERSION already downloaded..."
 		fi
 	
-		cd ${YAKKOSETUPDIR}
+		cd ${YAKKODIRECTORY}
 	}
 
 	[ $1 == "rollback" -a -z "${MIRRORSERVER}" ] && {
@@ -4817,7 +4837,7 @@ process-stage-downloadocpbinaries() {
 		else
 			rollback-stage-progression "Deleting OCP files for version ${OCPVERSION} (Download not completed)"
 			# The below :? is JUST IN CASE everything went crazy. We don't want to delete /
-			do-remove ${IMAGEREPO:?}/${OCPVERSION}
+			do-remove-directory ${IMAGEREPO:?}/${OCPVERSION}
 		fi
 	}
 }
@@ -5027,7 +5047,7 @@ process-stage-generateocpinstallerconfig() {
 
 		ask-user "Generate OCP cluster manifests and ignition files required for cluster bootstrap" "Y" && {
 	
-			echo Writing "ocp-setup-env" script for administration. Run \"source ${YAKKOSETUPDIR}/ocp-setup-env\" to load post-install...
+			echo Writing "ocp-setup-env" script for administration. Run \"source ${YAKKODIRECTORY}/ocp-setup-env\" to load post-install...
 			{
 				echo "PATH=\$PATH:${OCPINSTALLSOURCE}" 
 				echo export KUBECONFIG=${CLUSTERSETUPDIR}/auth/kubeconfig
@@ -5164,7 +5184,8 @@ process-stage-ingestmanifestsandignition() {
 				sed -i -r 's/(mastersSchedulable: ).*/\1False/' $CLUSTERSETUPDIR/manifests/cluster-scheduler-02-config.yml
 			else
 				# Only one worker - scheduling is required
-				print-in-colour orange "NOTICE: as there is only one master selected, it will be labelled SCHEDULABLE"
+				echo
+				print-in-colour orange "NOTICE: As there is only one master selected, it will be labelled SCHEDULABLE"
 				sed -i -r 's/(mastersSchedulable: ).*/\1True/' $CLUSTERSETUPDIR/manifests/cluster-scheduler-02-config.yml
 			fi
 
@@ -5598,9 +5619,9 @@ process-stage-waitforocpinstalltocomplete() {
 				} > ${LASTBUILDCONFIG}
 
 				# This is my tally, started on 24/11/2020 to keep count of build clusters
-				if [ -r ${YAKKOSETUPDIR}/.tallyhosts ]
+				if [ -r ${YAKKODIRECTORY}/.tallyhosts ]
 				then
-					for TALLYHOST in $(cat ${YAKKOSETUPDIR}/.tallyhosts)
+					for TALLYHOST in $(cat ${YAKKODIRECTORY}/.tallyhosts)
 					do
 						if [ "$(hostname)" == "${TALLYHOST}" ]
 						then
@@ -5624,6 +5645,8 @@ process-stage-waitforocpinstalltocomplete() {
 			echo
 			echo "Run  yakko  again to finish this stage when ready or follow prompts to delete cluster."
 			echo
+		else
+			rm ${YAKKODIRECTORY}/token-login >/dev/null 2>&1
 		fi
 	}
 }
@@ -5794,6 +5817,11 @@ process-stage-gatherclusterconfiguration() {
 			check-for-error-and-exit $? "libvirtd could not be started and is required for this step"
 			sleep 1
 
+			# YAKKO 5.0+ new check
+			systemctl start virtnetworkd
+			check-for-error-and-exit $? "virtnetworkd could not be started and is required for this step"
+			sleep 1
+
 			# We calculate a base network that's unused by looking at how many virtual networks exist.
 			# The user can change it or deal with it ;)
 			# This also takes care of potential duplicates in mac addresses
@@ -5843,8 +5871,8 @@ process-stage-gatherclusterconfiguration() {
 			OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/latest"
 
 			### QUESTION: Disconnected install 
-			print-question-separator DISCONNECTED INSTALL 
-			ask-user "(UNDERGOING TESTING) Do you want to install from a local mirror registry?" N
+			print-question-separator "DISCONNECTED INSTALL (EXPERIMENTAL!)"
+			ask-user "Do you want to install from a local mirror registry?" N
 			if [ $? -eq 0 ]
 			then
 				echo "This requires that you have a mirror registry running in your environment"
@@ -5986,7 +6014,7 @@ process-stage-gatherclusterconfiguration() {
 								do
 									if [ ${AVAILIMAGE} != ${OCPVERSION} ]
 									then
-										do-remove ${IMAGEREPO}/${AVAILIMAGE}
+										do-remove-directory ${IMAGEREPO}/${AVAILIMAGE}
 									fi
 								done
 							fi
@@ -6171,7 +6199,7 @@ process-stage-gatherclusterconfiguration() {
 					fi
 				done
 
-				cd ${YAKKOSETUPDIR} # One day I'll clean this up....
+				cd ${YAKKODIRECTORY} 
 
 				if [ ${VMDIRSUCCESS} -eq 1 ]
 				then
@@ -6401,7 +6429,7 @@ process-stage-gatherclusterconfiguration() {
 		fi
 
 		# We write a bunch of stuff for later retrieval in $YAKKODEFAULTS
-		CLUSTERSETUPDIR=${YAKKOSETUPDIR}/install-${CLUSTERNAME}-${CLUSTERDOMAIN}
+		CLUSTERSETUPDIR=${YAKKODIRECTORY}/install-${CLUSTERNAME}-${CLUSTERDOMAIN}
 		STUBFILES=${CLUSTERSETUPDIR}/stubfiles
 		mkdir $CLUSTERSETUPDIR > /dev/null 2>&1
 		mkdir ${STUBFILES} > /dev/null 2>&1
@@ -6460,7 +6488,7 @@ process-stage-gatherclusterconfiguration() {
 	[ $1 == "rollback" ] && {
 		rollback-stage-progression "Gather cluster configuration"
 		rm ${CLUSTERCONFIGFILE} > /dev/null 2>&1
-		do-remove $CLUSTERSETUPDIR > /dev/null 2>&1
+		do-remove-directory $CLUSTERSETUPDIR > /dev/null 2>&1
 	}
 }
 
@@ -6519,8 +6547,16 @@ yakko-process-stages() {
 ##########  If this were a different programming language, you would call this a "main()".... ########
 ######################################################################################################
 
+# We define a set of key config variables and files now that we know where we are running from
+# Moved some of these around with YAKKO 5.01
 YAKKODIRECTORY=$(dirname $(realpath $0))
 YAKKOEXECUTABLE=$(realpath $0)
+IMAGEREPO=${YAKKODIRECTORY}/images # The webserver will serve from here. oc and openshift-install are here already
+CLUSTERCONFIGFILE=${YAKKODIRECTORY}/.clusterconfig # Filename where all defaults for the cluster you are building are kept
+PULLSECRETFILE=${YAKKODIRECTORY}/.pullsecret
+LASTBUILDCONFIG=${YAKKODIRECTORY}/.lastyakkobuild
+YAKKODEFAULTS=${YAKKODIRECTORY}/.yakkodefaults # Filename where all defaults for YAKKO are kept
+
 
 set-selinux-state  # Identify this from the get go
 
@@ -6539,7 +6575,8 @@ fi
 
 if [ $(whoami) != 'root' ]
 then 
-	echo "ATTENTION: You must be user <root> to run ${YAKKONAME}"
+	echo
+	print-in-colour orange "ATTENTION: You must be user <root> to run ${YAKKONAME}"
 	cleanup-and-exit
 fi
 
@@ -6597,7 +6634,6 @@ then
 	fi
 fi
 
-
 if [ ! -e "${YAKKODIRECTORY}/.yakkohome" -o "${DOYAKKOINSTALL}" == "Y" ]
 then
 	while true
@@ -6614,17 +6650,17 @@ then
 		if [ ! -e /YAKKO ]
 		then
 			echo -n "Enter the directory where you want to install ${YAKKONAME} [/YAKKO]: "
-			read RESPONSE
-			if [ -z "${RESPONSE}" ]
+			read CANDIDATEYAKKODIRECTORY
+			if [ -z "${CANDIDATEYAKKODIRECTORY}" ]
 			then
-				RESPONSE=/YAKKO
+				CANDIDATEYAKKODIRECTORY=/YAKKO
 			fi
 		else
 			while true
 			do
 				echo -n "Enter the directory where you want to install ${YAKKONAME}: "
-				read RESPONSE
-				if [ -z "$RESPONSE" ]
+				read CANDIDATEYAKKODIRECTORY
+				if [ -z "$CANDIDATEYAKKODIRECTORY" ]
 				then 
 					echo "Please enter a valid directory name"
 					continue
@@ -6635,7 +6671,7 @@ then
 
 		fi
 
-		mkdir ${RESPONSE} > /dev/null 2>&1
+		mkdir ${CANDIDATEYAKKODIRECTORY} > /dev/null 2>&1
 		RESULT=$?
 
 		[ $RESULT -ne 0 ] && {
@@ -6643,11 +6679,11 @@ then
 			if [ $RESULT -eq 1 ] 
 			then
 				# The directory already exists
-				if [ $(ls -la ${RESPONSE} | wc -l) -gt 3  ] 
+				if [ $(ls -la ${CANDIDATEYAKKODIRECTORY} | wc -l) -gt 3  ] 
 				then
 					# And - it has files in it.
 					echo
-					echo  "Directory [$RESPONSE] already exists and contains files. "
+					echo  "Directory [$CANDIDATEYAKKODIRECTORY] already exists and contains files. "
 					ask-user "Continue installing ${YAKKONAME} in this directory" "N" noauto
 					if [ $? -eq 1 ] 
 					then
@@ -6661,7 +6697,7 @@ then
 				fi
 			fi
 
-			echo "Could not create directory [${RESPONSE}]. Try again."
+			echo "Could not create directory [${CANDIDATEYAKKODIRECTORY}]. Try again."
 			echo
 			continue
 		}
@@ -6669,53 +6705,78 @@ then
 		break
 	done
 
-	if [ -e "${RESPONSE}/${YAKKONAME}" ]
+	if [ -e "${CANDIDATEYAKKODIRECTORY}/${YAKKONAME}" ]
 	then
-		if [ $(ls -i "${RESPONSE}/${YAKKONAME}" | awk '{ print $1 }') -eq $(ls -i ${YAKKOEXECUTABLE} | awk '{ print $1 }') ]
+		if [ $(ls -i "${CANDIDATEYAKKODIRECTORY}/${YAKKONAME}" | awk '{ print $1 }') -eq $(ls -i ${YAKKOEXECUTABLE} | awk '{ print $1 }') ]
 		then
 			# We're probably just running yakko from what will be the destination directory
 			echo "You are running YAKKO from the destination directory - that's OK"
 		fi
 	else
-		cp ${YAKKOEXECUTABLE} ${RESPONSE}
-		check-for-error-and-exit $? "Could not copy ${YAKKONAME} to ${RESPONSE}"
+		cp ${YAKKOEXECUTABLE} ${CANDIDATEYAKKODIRECTORY}
+		check-for-error-and-exit $? "Could not copy ${YAKKONAME} to ${CANDIDATEYAKKODIRECTORY}"
 	fi
 
-	chmod +x ${RESPONSE}/${YAKKONAME}
-	check-for-error-and-exit $? "Could not make ${RESPONSE}/${YAKKONAME} executable"
+	chmod +x ${CANDIDATEYAKKODIRECTORY}/${YAKKONAME}
+	check-for-error-and-exit $? "Could not make ${CANDIDATEYAKKODIRECTORY}/${YAKKONAME} executable"
 
 	# Now we check/install packages!
 	install-required-yakko-packages
 
-	touch ${RESPONSE}/.yakkohome
-	check-for-error-and-exit $? "Could not create installer stub in ${RESPONSE}"
-
-	if [ -r ${YAKKODIRECTORY}/.pullsecret ]
+	# YAKKO 5.01 moves the pullsecret stage to an installer question!
+	echo "A Red Hat pull secret is required for Openshift downloads."
+	if [ -r ${PULLSECRETFILE} ] 
 	then
-		ask-user "Do you want to copy the existing pullsecret" Y noauto
-		[ $? -eq 0 ] && cp ${YAKKODIRECTORY}/.pullsecret ${RESPONSE}
+		PULLSECRET=$(cat ${PULLSECRETFILE})
+		ask-user "A pull secret already exists in ${YAKKODIRECTORY}, do you want to replace it" N
+		WANTPULLSECRET=$?
+	else
+		WANTPULLSECRET=0
 	fi
+
+	# There is no pull secret on file or user wants a new one now
+	if [ -z "${PULLSECRET}" -o "${WANTPULLSECRET}" -eq 0 ]
+	then
+		while true
+		do
+	        	echo "Please copy/paste pull secret from [ https://cloud.redhat.com/openshift/install/metal/user-provisioned ] or enter the path of a local file with it:"
+			read PULLSECRET
+
+			if [ -f $PULLSECRET ]
+			then
+				PULLSECRET=$(cat $PULLSECRET)
+			fi
+			
+			echo $PULLSECRET | grep '{"auths":{"cloud.openshift.com":' >/dev/null 2>&1
+			if [ $? -eq 0 ]
+			then
+				break
+			else
+				echo "Invalid pull secret, try again."
+			fi
+		done
+
+	        echo $PULLSECRET > ${PULLSECRETFILE}
+	else
+		echo "Using saved pull secret"
+	fi
+
+	hostname >  ${CANDIDATEYAKKODIRECTORY}/.yakkohome
+	check-for-error-and-exit $? "Could not create installer stub in ${CANDIDATEYAKKODIRECTORY}"
 
 	if [ -r ${YAKKODIRECTORY}/images ]
 	then
 		ask-user "Do you want to copy available images for OpenShift" Y noauto
-		[ $? -eq 0 ] && cp -R ${YAKKODIRECTORY}/images ${RESPONSE}
+		[ $? -eq 0 ] && cp -R ${YAKKODIRECTORY}/images ${CANDIDATEYAKKODIRECTORY}
 	fi
 
-	echo "YAKKO is now installed. Run again from directory [${RESPONSE}] to continue!"
+	echo
+	echo "YAKKO is now installed. Run again from directory [${CANDIDATEYAKKODIRECTORY}] to continue!"
 	cleanup-and-exit
 fi
 
-# We define a set of key config variables and files now that we know where we are running from
-YAKKOSETUPDIR=${YAKKODIRECTORY}
-IMAGEREPO=${YAKKOSETUPDIR}/images # The webserver will serve from here. oc and openshift-install are here already
-CLUSTERCONFIGFILE=${YAKKOSETUPDIR}/.clusterconfig # Filename where all defaults for the cluster you are building are kept
-PULLSECRETFILE=${YAKKOSETUPDIR}/.pullsecret
-LASTBUILDCONFIG=${YAKKOSETUPDIR}/.lastyakkobuild
-YAKKODEFAULTS=${YAKKOSETUPDIR}/.yakkodefaults # Filename where all defaults for YAKKO are kept
-
 # Now that we know where we stand, we can offer a new YAKKO landing place for a second, third etc cluster
-cd ${YAKKOSETUPDIR} >/dev/null 2>&1 # Just change to the directory of action from hereon
+cd ${YAKKODIRECTORY} >/dev/null 2>&1 # Just change to the directory of action from hereon
 if [ "$1" == addcluster ]
 then
 	# New with ~2.5?
@@ -6727,7 +6788,7 @@ then
 	check-for-error-and-exit $? "Could not create new directory - try again"
 
 	cp yakko ${NEWYAKKODIRECTORY}
-	if [ $(cat .yakkohome) != $(hostname) ]
+	if [ "$(cat .yakkohome)" != $(hostname) ]
 	then
 		# You may have run 'yakko' from a different host via NFS, and so
 		# the hostname in yakkohome won't agree. We care because we may need 
