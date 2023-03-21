@@ -1,7 +1,7 @@
 #!/bin/bash
 
-YAKKOVERSION=5.01
-YAKKODATE=20230318.0113
+YAKKOVERSION=5.02
+YAKKODATE=20230321.2053
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -477,9 +477,7 @@ install-required-yakko-packages() {
 	if [ ${CONNECTEDINSTALL} == 1 ]
 	then
 		echo
-		print-in-colour light-blue "You have requested a DISCONNECTED install."
-		echo
-		echo "YAKKO will look for the required packages and prompt you to install any missing."
+		print-in-colour orange "YAKKO will look for the required packages and prompt you to install any that are missing."
 	else
 		echo "Installing required packages..."
 	fi
@@ -4080,15 +4078,16 @@ process-stage-pullsecret() {
 
 		advance-stage-progression "Load pull secret" && return
 
-		[ -r ${PULLSECRETFILE} ] && PULLSECRET=$(cat ${PULLSECRETFILE})
+		[ -r ${YAKKODIRECTORY}/${PULLSECRETFILE} ] && PULLSECRET=$(cat ${YAKKODIRECTORY}/${PULLSECRETFILE})
 
-		ask-user "Add a new pull secret" N
-		WANTPULLSECRET=$?
+		# The below moved to the yakko installer on V5.01, what remains in this stage is precautionary
+		# ask-user "Add a new pull secret" N
+		# WANTPULLSECRET=$?
 
 		# There is no pull secret on file or user wants a new one now
-		if [ -z "${PULLSECRET}" -o ${WANTPULLSECRET} -eq 0 ]
+		if [ -z ${YAKKODIRECTORY}/"${PULLSECRET}" ]
 		then
-			echo "A new pull secret is required."
+			echo "A Red Hat pull secret is required but not available in ${YAKKODIRECTORY}."
 		        echo "Please copy/paste pull secret from [ https://cloud.redhat.com/openshift/install/metal/user-provisioned ] or enter the path of a local file with it:"
 		        read PULLSECRET
 			if [ -f $PULLSECRET ]
@@ -5065,7 +5064,7 @@ process-stage-generateocpinstallerconfig() {
 	
 			# We load/reload, in case there was an interrupt to the AUTO setup and these values were released
 			SSHPUBKEY=$(cat $OCPSSHKEY.pub)
-			PULLSECRET=$(cat ${PULLSECRETFILE})
+			PULLSECRET=$(cat ${YAKKODIRECTORY}/${PULLSECRETFILE})
 
 			# Check if HyperThreading is enabled, just in case
 			SOCKETCOUNT=$(lscpu | grep "Socket(s):" | cut -f2 -d: | awk '{print $1}')
@@ -5733,7 +5732,7 @@ process-stage-gatherclusterconfiguration() {
 			#This is so that we don't have to update if we add questions :)
 			#We just count the number of calls to the function... Terrible? Cool... 
 			#We filter "(" to avoid the func definition and the counter call below
-			QUESTIONSTOTAL=$(cat ${YAKKOEXECUTABLE} | grep "print-question-separator" | grep -v "(" | grep -cv "#print-question")
+			QUESTIONSTOTAL=$(cat ${YAKKOEXECUTABLE} | grep "print-question-separator" | grep -v "print-question-separator()" | grep -cv "#print-question-separator")
 			QUESTIONNUM=1
 
 			echo "This section will gather relevant information to build an OpenShift cluster on this host."
@@ -6043,6 +6042,15 @@ process-stage-gatherclusterconfiguration() {
 						break
 					elif [ "$RESPONSE" == "3" ]
 					then
+						echo
+						echo "You can use the following resources for older versions:"
+						echo "- OpenShift Container Platform (OCP) 4 upgrade paths (needs Red Hat login):" 
+						echo "  https://access.redhat.com/solutions/4583231"
+						echo "- Red Hat OpenShift Container Platform Update Graph (needs Red Hat login)"
+						echo "  https://access.redhat.com/labs/ocpupgradegraph/update_channel/"
+						echo "- OpenShift Clients Mirror:"
+						echo "  https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
+						echo
 						# Query what client is desired
 						while true
 						do
@@ -6553,9 +6561,9 @@ YAKKODIRECTORY=$(dirname $(realpath $0))
 YAKKOEXECUTABLE=$(realpath $0)
 IMAGEREPO=${YAKKODIRECTORY}/images # The webserver will serve from here. oc and openshift-install are here already
 CLUSTERCONFIGFILE=${YAKKODIRECTORY}/.clusterconfig # Filename where all defaults for the cluster you are building are kept
-PULLSECRETFILE=${YAKKODIRECTORY}/.pullsecret
 LASTBUILDCONFIG=${YAKKODIRECTORY}/.lastyakkobuild
 YAKKODEFAULTS=${YAKKODIRECTORY}/.yakkodefaults # Filename where all defaults for YAKKO are kept
+PULLSECRETFILE=.pullsecret  # We don't preface this with a directory because the name is used on installs before the dir exists
 
 
 set-selinux-state  # Identify this from the get go
@@ -6724,14 +6732,35 @@ then
 	install-required-yakko-packages
 
 	# YAKKO 5.01 moves the pullsecret stage to an installer question!
+	
+	WANTPULLSECRET=1 # We begin with the conception that there is no pull secret
+
 	echo "A Red Hat pull secret is required for Openshift downloads."
-	if [ -r ${PULLSECRETFILE} ] 
+	if [ -r ${CANDIDATEYAKKODIRECTORY}/${PULLSECRETFILE} ] 
 	then
-		PULLSECRET=$(cat ${PULLSECRETFILE})
-		ask-user "A pull secret already exists in ${YAKKODIRECTORY}, do you want to replace it" N
+		ask-user "A pull secret already exists in ${CANDIDATEYAKKODIRECTORY}, do you want to replace it" N
+		PULLSECRET=$(cat ${CANDIDATEYAKKODIRECTORY}/${PULLSECRETFILE})
 		WANTPULLSECRET=$?
+		
+		if [ ${WANTPULLSECRET} -ne 0 ]
+		then
+			echo "There was a problem reading the existing pull secret. A new one will be requested."
+		fi
 	else
-		WANTPULLSECRET=0
+		if [ -r ${YAKKODIRECTORY}/${PULLSECRETFILE} ]
+		then
+			# I am installing from a directory that has a pullsecret or using addcluster
+			ask-user "A pull secret already exists in ${YAKKODIRECTORY}, do you want to use for this install" Y
+			if [ $? -eq 0 ]
+			then
+				cp ${YAKKODIRECTORY}/${PULLSECRETFILE} ${CANDIDATEYAKKODIRECTORY}/${PULLSECRETFILE}
+				PULLSECRET=$(cat ${CANDIDATEYAKKODIRECTORY}/${PULLSECRETFILE})
+			else
+				WANTPULLSECRET=0
+			fi
+		else
+			WANTPULLSECRET=0
+		fi
 	fi
 
 	# There is no pull secret on file or user wants a new one now
@@ -6756,7 +6785,7 @@ then
 			fi
 		done
 
-	        echo $PULLSECRET > ${PULLSECRETFILE}
+	        echo $PULLSECRET > ${CANDIDATEYAKKODIRECTORY}/${PULLSECRETFILE}
 	else
 		echo "Using saved pull secret"
 	fi
