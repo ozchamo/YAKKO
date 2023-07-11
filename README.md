@@ -1,4 +1,4 @@
-# YAKKO 
+# YAKKO
 ## [Y]et [A]nother [K]VM [K]onfigurator for [O]penShift 
 
 ## WHAT IS YAKKO?
@@ -10,22 +10,22 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 5.02 (20230321.2053)
+## CURRENT VERSION: 6.00 (20230712.0241)
 What's new? 
 
-WHAT, 5.0?!!! WOWZA! WHY?
-- This version rearranges the installation of required packages in preparation for a feature in BETA - the capability of building in disconnected fashion! 
-  (This will require a registry properly configured.)
-- Tested on RHEL 9.1 and Fedora 37 (F37 is all good now) 
-- Added changing of OpenShift installer output verbosity (because sometimes there can be trouble...)
-- Added links to your cluster in console.redhat.com on the 'yakko' text dashboard and on the http service
-- Added a new option "yakko buildcluster" - this allows you to feed a cluster configuration file as the automatic base to build from (the file needs to be in the format that .lastyakkobuild creates after build a cluster). 
-- Tested with OCP 4.12 (SNO and multi-master/multi-node configs)
+And so it is that I brand this "6.0":
+- Tested on RHEL 9.2 and Fedora 38
+- Tested with OpenShift 4.13 (SNO and multi-master/multi-node configs, including 1 master and multiple workers)
+- This version decouples the DNSmasq dependency - or in other words "bring your own DNS"
+  Whilst you were always able to deploy your own DNS entries, yakko would would still build DNSmasq into your NetworkManager setup. Not ideal for static labs, but for laptops, I suggest you still deploy yakko's DNSmasq framework.
+- Cleaner DNS tests and internal use of DNS scaffolding. This used to always cause trouble, let me know what you find!
+- A new option for post install commands - build your cluster and if it goes well, automate post install-tasks for repeatibility. My post-install test harness always builds "yakkotest", and for example you may want to run 'yakko ops htpasswd myadmin mypass N' and have a new admin user 'myadmin' created automatically (that 'N' at the end means "do not delete the 'kubeadmin' user)
+- Stronger testing for service states - and yet, I still find that libvirtd sometimes needs a "Kick" to come alive again
+- Removed the question around OPEN ACCESS. This is not very important and can always be changed using 'yakko infra changeaccess'
 - A few bugs cleaned up here and there
 
-What's in the works already? 
-- Disconnected installation (but you knew this already, see above, and wish me luck!)
-- Looking at REMOTE nodes, yes! If only port 4789 wasn't UDP, I'd be done by now. If you want to participate on this, drop me a comment.
+What else is in the works? 
+- Still looking at REMOTE nodes, yes! If only port 4789 wasn't UDP, I'd be done by now. If you want to participate on this, drop me a comment. I have done a little testing and it is dead easy, except for that all important port.
 
 And some of the cool features that have been there a for a while...
 - Adapt to changes in the IP address of the server (e.g. when changing wireless networks!)
@@ -36,6 +36,7 @@ And some of the cool features that have been there a for a while...
 - Assigning NFS shares for registry and for Namespace/Project storage 
 - Purging existing downloaded OpenShift images on disk
 - List services and files that are in use by a cluster
+
 ---
 ## INTRODUCTION
 YAKKO was built around the concept of having ONE script/installer/manager that does it all, using the underlying operating system as the installation/operation platform and resource server/service. As a prime example, YAKKO depends on libvirt/KVM and so it will install and configure required packages on your server to build and run OpenShift VMs, just as it may be used as the DNS resource should you not have your own DNS. Because of this, YAKKO is a bit opinionated, but then again, it's not built for creating "production ready" clusters, and so it should suit most people with a passing need or interest in having an OpenShift cluster around (or... again!)
@@ -46,7 +47,7 @@ Why would you want to run your own (single-box) cluster, isn't that self defeati
 - You can easily setup different versions of OpenShift and examine features and compare behaviour 
 - No public cloud bill... or bill shock! 
 - You can test your more complex apps on multiple worker nodes 'for real' 
-- You might be a a fan of "Self hosting"
+- You might be a fan of "Self hosting"
 - OpenShift Pull Secrets from Red Hat have a lifetime of 60 days, so re-installing is kinda useful
 - You can mess with different clusters on the same server (BUT NOTE! Only one cluster running at a time!)
 - You can create cheap clusters for experimenting with Red Hat Advanced Cluster Manager (RHACM)
@@ -91,11 +92,11 @@ It is not a management tool for OpenShift. It has a small overlay of features to
     - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE
 
 **Tested combinations to date with this release:**
-- OpenShift 4.12
-- RHEL 9.1 and Fedora 37 
+- OpenShift 4.13
+- RHEL 9.2 and Fedora 38 
 
-**What's the test bed**  
-The testbed to build and test YAKKO is an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 300 OpenShift clusters with YAKKO! This system has Fedora 37, which is still undergoing issues with some operators not fully coming up. 
+**What's the test bed?**  
+YAKKO is built on an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 300 OpenShift clusters with YAKKO! 
 The current "prod" system is an Intel NUC with a i9 8-core CPU, 64GB RAM, running RHEL 9.1
 And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 with 64GB RAM and 8c/16t). And no, I have never used spinning disk, if you do, I wish you luck.
   
@@ -103,6 +104,7 @@ And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 wit
 - Linux skills - if you are even attempting at using this, you must have some already...
 - Project cockpit is a good (though hungry) friend
 - Your own DNS server that can handle wildcards (but YAKKO can handle this responsibility)
+
 ---
 ## HOW TO - INSTALL or "DAY 1"
 #### ➜ [Watch YAKKO 4.20 build a 3 master/worker cluster"](https://asciinema.org/a/497235)
@@ -153,6 +155,7 @@ __________________________________________________________________________
  - Make infrastructure changes ----> yakko infra <options>
  - Make operational changes -------> yakko ops <options>
  - Use OpenShift's 'oc' command ---> source ocp-setup-env  (in this shell)
+ - Use a token based login --------> /YAKKO-TEST-NODNSMASQ/token-login
  - Basic cluster info at ----------> http://192.168.100.2:8080
  - Access cluster externally ------> Add [192.168.100.2] as a DNS server in your clients
    (This provides an alternative for when configuring DNS in your network is not possible)
@@ -268,7 +271,7 @@ Interested in how this all works? Here goes a little explaining of the YAKKO bui
   - It is the primary delivery mechanism of RHCOS images for the nodes to PXE boot over HTTP
   - When a cluster is up, it provides the user some basic cluster information via port 8080
 - **DNSmasq:** Used for wildcard DNS into your OpenShift cluster, if you don't have such a service readily available. Note that DNSmasq is operated under NetworkManager - YAKKO will not provision a separate DNSmasq service nor will it interfere with an existing one. Running DNSmasq will also allow external users leveraging the YAKKO cluster as a nameserver to see the cluster with its own FQDN, no matter what local domain you set it up with!
-- **KVM:** This is the virtualisation foundation for the cluster running on your server. It will be used to create all virtual machines that perform master/worker nodes as well as provision a virtual network to hide the cluster nodes' internal communication from the outside world.
+- **KVM:** This is the virtualisation foundation for the cluster running on your server. It will be used to create all virtual machines that perform master/worker nodes as well as provision a virtual network to hide the cluster nodes' internal communication from the outside world.  
 
 When yakko starts a cluster, it will add the following files to your system and pull them when the cluster is subsequently shutdown as long as you use 'yakko startcluster' and 'yakko stop cluster':
 - **HAProxy**: /etc/haproxy/conf.d/yakko-CLUSTERNAME-haproxy.cfg
@@ -276,12 +279,14 @@ When yakko starts a cluster, it will add the following files to your system and 
 - **NetworkManager**: /etc/NetworkManager/conf.d/yakko-CLUSTERNAME-NetworkManager.conf
 - **DNSmasq**: /etc/NetworkManager/dnsmasq.d/yakko-CLUSTERNAME-dnsmasq.conf 
 - **systemd-resolved**: /etc/systemd/resolved.conf.d/yakko-CLUSTERNAME-resolved.conf (only if systemd/resolved is in use)
+
 ---
-## WHAT IS YAKKO MISSING?  (Backlog of sorts?)
+## WHAT IS YAKKO MISSING?  (Backlog of sorts?)  
 Short of this being a backlog...
 - BYO network (i.e. don't depend on a virtual network) - this should be mostly easy, but the business case for adding this is not very clear!
 - Adding nodes from other physical machines and moving virtual nodes around (which may well defeat YAKKO's own purpose)
 - Possibly a few 'certainty' principles of higher level systems administration, this said, it tries to keep your firewall on, your SELinux running etc etc.
+
 ---
 ## QUESTIONS YOU MAY HAVE, FOR FUN
 - Why didn't I use Ansible? 
@@ -295,11 +300,13 @@ Yes, after you master the basics. Who doesn't want to rebuild OpenShift all the 
 - Do you have to really deploy HAProxy on the box? 
 It's more than a convenience. HAProxy bridges the virtual network so that both the OpenShift host and other hosts on your network can talk to the cluster in the same way and through the 'public' network.
 - Lots of other stuff I haven't thought off, so leave your comments!
+
 ---
 ## COMMITMENT and ACKNOWLEDGEMENTS
 - I hereby pledge to test and update as new releases of OpenShift, RHEL and FEDORA come out... Until I don't, and then I will delete this section :)
 - I was inspired in automating this after receiving a certification in "Advanced Red Hat OpenShift Container Platform Deployment and Management" and later reading https://github.com/eitchugo/openshift-libvirt. Thanks Hugo! It was "short" and after typing in all the looooong host kernel parameters required for each VM to boot, I decided that this was worth investing time into. But there are a ton of cookbooks out there, they are all different. I didn't want to write another cookbook, I thought it would be more fun to write a bot-chef to cook for me. 
 - I needed a COVID confinement project. This is it!
+
 ---
 ## MY OWN EXPERIENCE AND FINAL WORDS
 - YAKKO is a big undertaking. It began as an exercise in curiosity and developed into a fledgling almost-product
@@ -308,4 +315,35 @@ It's more than a convenience. HAProxy bridges the virtual network so that both t
 - There will always be people, like me, who hold "self-hosted" as a guiding principle to learn from and... Enjoy!
 
 
+---
+## LOOKING FOR OLDER "WHAT'S NEW(s)"?
 
+## YAKKO 5.X
+- This version rearranges the installation of required packages in preparation for a feature in BETA - the capability of building in disconnected fashion! 
+  (This will require a registry properly configured.)
+- Tested on RHEL 9.1 and Fedora 37 (F37 is all good now) 
+- Added changing of OpenShift installer output verbosity (because sometimes there can be trouble...)
+- Added links to your cluster in console.redhat.com on the 'yakko' text dashboard and on the http service
+- Added a new option "yakko buildcluster" - this allows you to feed a cluster configuration file as the automatic base to build from (the file needs to be in the format that .lastyakkobuild creates after build a cluster). 
+- Tested with OCP 4.12 (SNO and multi-master/multi-node configs)
+- A few bugs cleaned up here and there
+
+## YAKKO 4.X
+What's new? 
+- Tested on RHEL 8.5, 8.6 and 9.0 (Yes!) and of course, Fedora 35 & 36
+- Tested with OCP 4.10 and 4.11 Nightly
+- Improved reporting of existing cluster status 
+  (Takes into consideration if you are not a kube admin)
+- Improved network mobility (read laptop users!) and adapting to IP address changes
+- Should be backwards compatible to 4.1 
+- MANY MANY MANY other little improvements and fixes under the hood
+
+And this builds on 4.0 and 4.1:
+- Support for OpenShift 4.10 and single node/single master clusters
+- Support for installing multiple clusters (but run one at a time!)
+- Support for resizing (master/worker) node RAM - on the go!
+- Setting up NFS shares for registry and for Namespace/Project storage on your server
+- Assigning NFS shares for registry and for Namespace/Project storage 
+- Purging existing downloaded OpenShift images on disk
+- Adapt to changes in the IP address of the server (e.g. when changing wireless networks!)
+- List services and files that are in use by a cluster
