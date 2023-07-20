@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x
 
-YAKKOVERSION=6.00
-YAKKODATE=20230712.0241
+YAKKOVERSION=6.01
+YAKKODATE=20230720.1514
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -1322,7 +1322,7 @@ build-ocp-node() {
 	if [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			--memory=${MINWORKERRAMSIZE},maxmemory=${NODERAMSIZE} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host,+vmx \
 			--disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -1335,7 +1335,7 @@ build-ocp-node() {
 		BUILDOCPNODERESULT=$?
 	else
       		virt-install \
-			 --memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			 --memory=${MINWORKERRAMSIZE},maxmemory=${NODERAMSIZE} \
 	       	         --vcpus ${NODEVCPUS} \
        		         --cpu host \
        		         --disk path=${OCPVMDISKDIR}/${NODEHOSTNAME}.${CLUSTERFQDN}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -6570,6 +6570,8 @@ process-stage-gatherclusterconfiguration() {
 				# We won't use PHYSICAL system RAM here as a warning mark
 				SYSTEMAVAILRAM=$(free -m | grep Mem:| awk '{ print $7 }')
 
+				SYSTEMPHYSICALRAM=$(($SYSTEMPHYSICALRAM / 1024))
+
 				# QUESTION - not really but we confirm
 				print-question-separator TOTAL CAPACITY REQUIREMENTS
 				echo "Requested OpenShift configuration requires:"
@@ -6577,7 +6579,7 @@ process-stage-gatherclusterconfiguration() {
 				echo "- DISK: ${TOTCLUSTERDISK} GiB "
 				echo
 				echo "Additionally you will need to allow some RAM for the bootstrap VM."
-				echo "This machine is currently defined with 6GB RAM, no testing has been done with using swap in its entirety."
+				echo "This machine is currently defined with ${SYSTEMPHYSICALRAM}GB RAM, no testing has been done with using swap in its entirety."
 				echo
 
 				if [ ${SYSTEMAVAILRAM} -lt ${TOTCLUSTERRAM} ]
