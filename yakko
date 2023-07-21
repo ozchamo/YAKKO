@@ -41,9 +41,9 @@ REDUCEPROMETHEUS=N    # Prometheus pod RAM can be reduced, which makes sense, ch
 SINGLEMASTERRAMSIZE=32000 # Recommended 8192. 6000 not enough
 # OpenShift 4.9: https://docs.openshift.com/container-platform/4.9/installing/installing_sno/install-sno-preparing-to-install-sno.html
 THREEMASTERRAMSIZE=16000 # Recommended 8192. 6000 not enough
-WORKERRAMSIZE=8000 # Recommended ... 2048!? Worked well with 5Gi. Use as 8 to do some real work
-MINWORKERRAMSIZE=4000 # This boundary has been changing as OCP revs up!
-BOOTSTRAPNODERAMSIZE=8000 # RAM size of the bootstrap has changed over time...
+WORKERRAMSIZE=12000 # Recommended ... 2048!? Worked well with 5Gi. Use as 8 to do some real work
+MINWORKERRAMSIZE=12000 # This boundary has been changing as OCP revs up!
+BOOTSTRAPNODERAMSIZE=12000 # RAM size of the bootstrap has changed over time...
 REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy wget lsof httpd firewalld bind-utils"
 ##########################################################################
 
