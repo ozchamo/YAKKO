@@ -10,24 +10,29 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 6.00 (20230712.0241)
+## CURRENT VERSION: 7.00 (20231212.0140)
 What's new? 
 
-And so it is that I brand this "6.0":
-- Tested on RHEL 9.2 and Fedora 38
-- Tested with OpenShift 4.13 (SNO and multi-master/multi-node configs, including 1 master and multiple workers)
-- This version decouples the DNSmasq dependency - or in other words "bring your own DNS"
-  Whilst you were always able to deploy your own DNS entries, yakko would would still build DNSmasq into your NetworkManager setup. Not ideal for static labs, but for laptops, I suggest you still deploy yakko's DNSmasq framework.
-- Cleaner DNS tests and internal use of DNS scaffolding. This used to always cause trouble, let me know what you find!
-- A new option for post install commands - build your cluster and if it goes well, automate post install-tasks for repeatibility. My post-install test harness always builds "yakkotest", and for example you may want to run 'yakko ops htpasswd myadmin mypass N' and have a new admin user 'myadmin' created automatically (that 'N' at the end means "do not delete the 'kubeadmin' user)
-- Stronger testing for service states - and yet, I still find that libvirtd sometimes needs a "Kick" to come alive again
-- Removed the question around OPEN ACCESS. This is not very important and can always be changed using 'yakko infra changeaccess'
+This version brings a lot of change under the covers:
+- Stay tuned for the YAKKO blog coming soon at blogs.redhat.com!
+- Tested on RHEL 9.2, RHEL 9.3, Fedora 38 and Fedora 39
+- Tested with OpenShift 4.13 and 4.14 (SNO and multi-master/multi-node configs, including 1 master and multiple workers)
+  (actually, this version was used to run up ALL OCP versions down to 4.2, but not a lot of testing, just for fun!)
+- HUGE improvements on installing multiple clusters (via 'infra addcluster'). You still can't run them at the same time, but, earlier versions failed to work when using the same cluster name and could therefore cause issues to other existing clusters, in particular, you couldn't run up the same cluster name, now you can, which makes a lot of sense
+- Huge improvements in building from a template - now 'infra buildfromtemplate' has well defined needs (and it comes down to just cluster name, cluster domain and where to store the VMs
+- Added further info to the yakko text dashboard 
+- Added a "cluster notes" option to 'infra' - so that you can more easily document what you are implementing with each particular cluster and document along the way
+- Added a "listclusters" option to 'infra' to list all the clusters on your host, regardless of their state
+- Added cluster certificate info so that you know when your certificates will get rotated
+- Added a help note to 'yakko infra sshtonode' to assist in using the internal KUBECONFIG files
+- Renamed 'yakko ops restartservices' to 'yakko ops updateservices', because it does more than just restart
 - A few bugs cleaned up here and there
 
 What else is in the works? 
-- Still looking at REMOTE nodes, yes! If only port 4789 wasn't UDP, I'd be done by now. If you want to participate on this, drop me a comment. I have done a little testing and it is dead easy, except for that all important port.
+- Right now, nothing. At this point, YAKKO is now FULLY what it needed to be. We'll see, but I will certainly keep testing and cleaning bugs, and testing new versions of RHEL and Fedora.
 
 And some of the cool features that have been there a for a while...
+- Eliminate the dependency on your physical network by isolating access just to the system that YAKKO is built upon (by using yakko infra changeaccess)
 - Adapt to changes in the IP address of the server (e.g. when changing wireless networks!)
 - Support for single node/single master clusters since OpenShift 4.10
 - Support for installing multiple clusters (but run one at a time!)
@@ -36,6 +41,7 @@ And some of the cool features that have been there a for a while...
 - Assigning NFS shares for registry and for Namespace/Project storage 
 - Purging existing downloaded OpenShift images on disk
 - List services and files that are in use by a cluster
+- Running post-install tasks
 
 ---
 ## INTRODUCTION
@@ -47,11 +53,11 @@ Why would you want to run your own (single-box) cluster, isn't that self defeati
 - You can easily setup different versions of OpenShift and examine features and compare behaviour 
 - No public cloud bill... or bill shock! 
 - You can test your more complex apps on multiple worker nodes 'for real' 
-- You might be a fan of "Self hosting"
+- You might be a fan of "self hosting"
 - OpenShift Pull Secrets from Red Hat have a lifetime of 60 days, so re-installing is kinda useful
 - You can mess with different clusters on the same server (BUT NOTE! Only one cluster running at a time!)
 - You can create cheap clusters for experimenting with Red Hat Advanced Cluster Manager (RHACM)
-- LEARN without Fear or/of consequences!
+- LEARN without fear or/of consequences!
 
 In a nutshell, what does YAKKO do? 
 - Sets up and installs any and all requirements/dependencies for you
@@ -82,22 +88,22 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 - Access to the internet
 - RHEL/Fedora as the base installed operating system ("Server with GUI" and then YAKKO gives you a working cluster)
 - Ports 80 and 443 available (to pass through to your applications in OpenShift)
-- 16GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB. I've succeed with as little as 12GB, used for a Single Node Cluster setup)
-- 32GB+ RAM for a 3 master cluster, likely no workers (I've succeeded on a box with 24GB but it's old and the CPU gets in the way :)
-- 48GB+ for multi-node clusters (3 masters + a worker or three :) 
+- 24GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB. I've succeed with as little as 12GB, used for a Single Node Cluster setup)
+- 32GB+ RAM for a 1 master + 1 worker cluster
+- 48GB+ for multi-node clusters (3 master compact cluster or maybe add a worker or two :) 
 - 2.5GB of disk space for the install files (YAKKO will accumulate older OpenShift versions so keep an eye on the "images" directory within the directory where it resides)
 - SSD class storage with capacity as follows:
-    - 3 masters require 90GB (30GB each)
-    - worker nodes require 20GB each
+    - 3 masters require 300GB (100GB each)
+    - worker nodes require additional 100GB each
     - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE
+    - the above are the published requirements, in reality 60-70GB per node should be sufficient
 
 **Tested combinations to date with this release:**
-- OpenShift 4.13
-- RHEL 9.2 and Fedora 38 
+- OpenShift 4.13, 4.14
+- RHEL 9.2 and 9.3, Fedora 38 and 39
 
 **What's the test bed?**  
 YAKKO is built on an Alienware Aurora R6 with an Intel i7-7700 (4c/8t @ 3.6GHz, ~2017) w/64GB RAM and one m.2 512GB SSD. For fun, the largest cluster I have built on it had 6 worker nodes. This machine has seen the build of more than 300 OpenShift clusters with YAKKO! 
-The current "prod" system is an Intel NUC with a i9 8-core CPU, 64GB RAM, running RHEL 9.1
 And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 with 64GB RAM and 8c/16t). And no, I have never used spinning disk, if you do, I wish you luck.
   
 **Nice to Haves**
@@ -129,16 +135,20 @@ And my "RHEL 9 dev" system? A laptop! (It's a sweet Lenovo Thinkpad P1 Gen-3 wit
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 5.0)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 7.00)
 __________________________________________________________________________
 
- CLUSTER: cluster.testdomain  (ID: 4c43f198-91ee-424c-a746-c6f73434cb72)
- Version: 4.12.4  (Built: 26-Feb-2023@14:27:53)
- @RedHat: https://console.redhat.com/openshift/details/4c43f198-91ee-424c-a746-c6f73434cb72)
+ CLUSTER: mycluster.testdomain  (Built: 07-Nov-2023@19:32:37)
+ YAKKOID: 1077761930
+ VERSION: 4.14.1
+ @REDHAT: https://console.redhat.com/openshift/details/a6317feb-65bd-4833-b98f-a1639c913448
+ SUBNET:  192.168.141.0
+ CERTEXP: Tue 08 Dec 16:58:23 AEDT 2023
+ PURPOSE: This is a generic playpen 
 
                state      
- Web Console:  [ ✔ ]  https://console-openshift-console.apps.cluster.testdomain
- API Service:  [ ✔ ]  https://api.cluster.testdomain:6443
+ Web Console:  [ ✔ ]  https://console-openshift-console.apps.mycluster.testdomain
+ API Service:  [ ✔ ]  https://api.mycluster.testdomain:6443
 
  Active Masters:   3/3
  Active Nodes:     2/2 (workers/infra)
@@ -148,16 +158,15 @@ __________________________________________________________________________
  Password:      DVTGk-Wa85w-yrFQc-cTK6n
 
  Registry configuration: local
-
  External access: ENABLED (to change: yakko infra changeaccess)
 
  - See yakko command usage --------> yakko usage
  - Make infrastructure changes ----> yakko infra <options>
  - Make operational changes -------> yakko ops <options>
- - Use OpenShift's 'oc' command ---> source ocp-setup-env  (in this shell)
- - Use a token based login --------> /YAKKO-TEST-NODNSMASQ/token-login
- - Basic cluster info at ----------> http://192.168.100.2:8080
- - Access cluster externally ------> Add [192.168.100.2] as a DNS server in your clients
+ - Use OpenShift's 'oc' command ---> source /YAKKO/ocp-setup-env  
+ - Cluster command line login -----> /YAKKO/cluster-login
+ - Basic cluster info webpage - ---> http://192.168.1.2:8080
+ - Access cluster externally ------> Add [192.168.1.2] as a DNS server in your clients
    (This provides an alternative for when configuring DNS in your network is not possible)
 
  NOTE: You did not have KUBECONFIG set when you invoked YAKKO.
@@ -172,24 +181,28 @@ The best and quickest way to understand the YAKKO idiosyncrasy is by reading the
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 4.42)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 7.00)
 __________________________________________________________________________
 
 When NO CLUSTER is configured you can call: 
-    yakko  (no params)    -> build a new cluster
+    yakko  (no params)    -> build a new cluster - just answer questions
     yakko rebuildcluster  -> recreate the last cluster built
+    yakko buildfromtemplate <templatefile>
+                          -> build a cluster automatically from <templatefile>
 
 When a CLUSTER IS CONFIGURED you can call:
     yakko  (no params)    -> show running cluster state and configuration
-    yakko startcluster    -> startup the cluster (same as yakko infra startcluster)
-    yakko stopcluster     -> shutdown the cluster (same as yakko infra stopcluster)
+    yakko startcluster    -> startup or resume the cluster (same as yakko infra startcluster)
+    yakko stopcluster     -> shutdown or suspend (in-memory) the cluster
     yakko deletecluster   -> delete the running or stopped cluster (same as yakko infra deletecluster)
     yakko infra <options> -> make infrastructure changes offered by yakko (see below)
     yakko ops <options>   -> make operational changes offered by yakko (see below)
 
 At any time, you can call:
     yakko addcluster      -> add a new cluster (this will setup YAKKO in a new directory)
-    yakko purgedownloads  -> delete downloaded OpenShift images
+    yakko purgedownloads  -> delete downloaded OCP images
+    yakko version         -> prints yakko information
+
 
 Calling 'yakko infra' (with no option) will always remind you of the following:
 USAGE: yakko infra <OPTION> [parameters]
@@ -216,23 +229,25 @@ Relates to the mundane tasks related to the infrastructure of the cluster and th
    
 `[root@ocphost YAKKO]# ./yakko infra`
 ```
-USAGE: yakko infra <OPTION> [parameters]  
-OPTION is one of:  
-    - startcluster    ->  Start up an existing cluster  
-    - stopcluster     ->  Shutdown an existing cluster  
-    - addnode         ->  Grow the cluster compute capacity by adding a new compute/infra node  
-    - deletenode      ->  Remove a running node from the cluster  
-    - nodelogs        ->  Display the logs of a particular node  
-    - sshtonode       ->  Provide terminal access to an individual cluster node  
-    - changeaccess    ->  Enable/disable OpenShift access by other clients in your network  
-    - restartservices ->  Restart supporting services for cluster (virt network/HAproxy/libvirtd)
-    - listresources   ->  Print a summary of services and files in use by the (YAKKO) cluster
-    - describehw      ->  Describe the harware supporting the installation
-    - resizeram       ->  Change the RAM size of a node
-    - purgedownloads  ->  Delete all downloaded OpenShift images on disk
-    - nfsshare        ->  Setup a directory as NFS share for creating a PVC for registry or NS store
-    - installcomplete ->  Mark a cluster build as completed even if the installer refuses to say it is
-    - deletecluster   ->  Delete entire cluster and all infrastructure  
+    USAGE: yakko infra <OPTION> [parameters]
+    OPTION is one of:
+        - startcluster    ->  Start up an existing cluster
+        - stopcluster     ->  Shutdown or suspend the cluster in memory
+        - addnode         ->  Grow the cluster compute capacity by adding a new compute/infra node
+        - deletenode      ->  Remove a running node from the cluster
+        - nodelogs        ->  Display the logs of a particular node
+        - sshtonode       ->  Provide terminal access to an individual cluster node
+        - changeaccess    ->  Enable/disable OpenShift access by other clients in your network
+        - updateservices  ->  Update supporting services for cluster (virt network/HAproxy/libvirtd)
+        - listresources   ->  Print a summary of services and files in use by the (YAKKO) cluster
+        - listclusters    ->  List all YAKKO clusters visible to the host. 
+        - describehw      ->  Describe the harware supporting the installation
+        - resizeram       ->  Change the RAM size of a node
+        - purgedownloads  ->  Delete all downloaded OCP images on disk
+        - nfsshare        ->  Setup a directory as NFS share for creating a PVC for registry or NS store
+        - installcomplete ->  Mark a cluster build as completed even if the installer refuses to say it is
+        - deletecluster   ->  Delete entire cluster and all infrastructure
+
 ```
 <br>
   
@@ -242,19 +257,20 @@ Relates to the higher level Kubernetes/OpenShift stuff that make life more easy 
 `[root@ocphost YAKKO]# ./yakko ops`
 
 ```
-USAGE: yakko ops <OPTION> [parameters]  
-OPTION is one of:  
-    - htpasswd        ->  Deploy local password access and a new administrator  
-    - useradd         ->  Add a new user to local password DB  
-    - userdelete      ->  Delete an existing user from the local password DB  
-    - mastersched     ->  Enable/disable master scheduling  
-    - nodelabel       ->  Change the label of a node between worker <-> infra  
-    - localregistry   ->  Enable a local registry so you can actually use the cluster  
-    - nfsregistry     ->  Enable an existing NFS share as registry (persistent)
-    - nfsmap          ->  Map an existing NFS share to a namespace
-    - ingresscert     ->  Install an existing wildcard certificate
-    - approvecsrs     ->  Approve any outstanding CSRs (Certificate Signing Requests)
-    - yakkotest       ->  Deploy the 'yakkotest' app on your cluster, to test the lot!!  
+    USAGE: yakko ops <OPTION> [parameters]
+    OPTION is one of:
+        - htpasswd        ->  Deploy local password access and a new administrator
+        - useradd         ->  Add a new user to local htpasswd DB
+        - userdelete      ->  Delete an existing user from the local htpasswd DB
+        - mastersched     ->  Enable/disable master scheduling
+        - approvecsrs     ->  Approve any outstanding CSRs (Certificate Signing Requests)
+        - nodelabel       ->  Change the label of a node between worker <-> infra
+        - localregistry   ->  Enable localstorage registry (volatile)
+        - nfsregistry     ->  Enable an existing NFS share as registry (persistent)
+        - nfsmap          ->  Map an existing NFS share to a namespace
+        - ingresscert     ->  Install an existing wildcard certificate
+        - yakkotest       ->  Deploy the 'yakkotest' app on your cluster, to test the lot!!
+
 ```
 ---
 ## WHAT DOES THE YAKKO ARCHITECTURE LOOK LIKE?
@@ -289,16 +305,18 @@ Short of this being a backlog...
 
 ---
 ## QUESTIONS YOU MAY HAVE, FOR FUN
-- Why didn't I use Ansible? 
-I could, I chose not to, because I would have had to learn another TON of stuff. I actually pulled out a couple of lines where I did use it. I wanted this to be ONE script with no additional downloads for code, no dependencies of other scripts. YAKKO is not big scale automation anyway.
-- What if I have two boxes and I want to spread the load?
-I want to cook that too. I have two boxes, Large and medium. My dream is to turn the medium box into a CNV node. Now that remote nodes are supported, this is in the short term roadmap, success looks promising but not guaranteed!
 - What are the minimum requirements?
-See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  (note - Single Node Cluster only on this hardware)
-- Is it AUTOMATIC
-Yes, after you master the basics. Who doesn't want to rebuild OpenShift all the time?
+See above. I've happily succeeded with a 4 core/8 thread server from 2009, a Sun Ultra 27! It may well be the only Sun box in the Universe running OpenShift :)  (note - Single Node OpenShift "SNO" cluster only on this hardware)
+- Is it AUTOMATIC?
+Yes, after you master the basics. Who doesn't want to rebuild OpenShift all the time? 
+- Does it always work?
+Not always - the OpenShift installer has its moments, you may be CPU or memory bound, you may be bandwidth contrained (the OpenShift installer downloads a LOT of images, you may run into some trouble with the required services (which are never unsurmountable) or you may find some services in your server require a little love, and there may still be bugs (!) although the actual install section of YAKKO has been stable for very long now. Look at the messages, look at your server and retry!
 - Do you have to really deploy HAProxy on the box? 
 It's more than a convenience. HAProxy bridges the virtual network so that both the OpenShift host and other hosts on your network can talk to the cluster in the same way and through the 'public' network.
+- What if I have two boxes and I want to spread the load?
+I want to cook that too. I have two boxes, Large and medium. My dream is to turn the medium box into a CNV node. Now that remote nodes are supported, this is in the short term roadmap, success looks promising but not guaranteed!
+- Why didn't I use Ansible? 
+I could, I chose not to, because I would have had to learn another TON of stuff. I actually pulled out a couple of lines where I did use it. I wanted this to be ONE script with no additional downloads for code, no dependencies of other scripts. YAKKO is not big scale automation anyway.
 - Lots of other stuff I haven't thought off, so leave your comments!
 
 ---
@@ -318,10 +336,20 @@ It's more than a convenience. HAProxy bridges the virtual network so that both t
 ---
 ## LOOKING FOR OLDER "WHAT'S NEW(s)"?
 
+## YAKKO 6.X
+- Tested on RHEL 9.2 and Fedora 38
+- Tested with OpenShift 4.13 (SNO and multi-master/multi-node configs, including 1 master and multiple workers)
+- This version decouples the DNSmasq dependency - or in other words "bring your own DNS" Whilst you were always able to deploy your own DNS entries, yakko would would still build DNSmasq into your NetworkManager setup. Not ideal for static labs, but for laptops, I suggest you still deploy yakko's DNSmasq framework.
+- Cleaner DNS tests and internal use of DNS scaffolding. This used to always cause trouble, let me know what you find!
+- A new option for post install commands - build your cluster and if it goes well, automate post install-tasks for repeatibility. My post-install test harness always builds "yakkotest", and for example you may want to run 'yakko ops htpasswd myadmin mypass N' and have a new admin user 'myadmin' created automatically (that 'N' at the end means "do not delete the 'kubeadmin' user)
+- Stronger testing for service states - and yet, I still find that libvirtd sometimes needs a "kick" to come alive again
+- Removed the question around OPEN ACCESS. This is not very important and can always be changed using 'yakko infra changeaccess'
+- A few bugs cleaned up here and there
+
 ## YAKKO 5.X
+- Tested on RHEL 9.1 and Fedora 37 (F37 is all good now) 
 - This version rearranges the installation of required packages in preparation for a feature in BETA - the capability of building in disconnected fashion! 
   (This will require a registry properly configured.)
-- Tested on RHEL 9.1 and Fedora 37 (F37 is all good now) 
 - Added changing of OpenShift installer output verbosity (because sometimes there can be trouble...)
 - Added links to your cluster in console.redhat.com on the 'yakko' text dashboard and on the http service
 - Added a new option "yakko buildcluster" - this allows you to feed a cluster configuration file as the automatic base to build from (the file needs to be in the format that .lastyakkobuild creates after build a cluster). 
