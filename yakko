@@ -1,8 +1,8 @@
 #!/bin/bash
 # set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=7.00
-YAKKODATE=20231212.0140
+YAKKOVERSION=7.1
+YAKKODATE=20240111.1741
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -43,8 +43,8 @@ MINWORKERRAMSIZE=8000      # This boundary has been changing as OCP revs up!
 BOOTSTRAPNODERAMSIZE=10000 # See recommendation links above - RAM size of the bootstrap has changed over time...
 
 # Disk Sizing
-MASTERDISKSIZE=50     # Disk image size for master, GB
-WORKERDISKSIZE=50     # Disk image size for worker, GB
+MASTERDISKSIZE=100     # Disk image size for master, GB
+WORKERDISKSIZE=100     # Disk image size for worker, GB
 MAXNODEVCPUS=4        # Max number of allowable CPUs for a worker node
 MAXWORKERNODES=5      # Max number of worker nodes allowed at cluster BUILD time, after that, no limit 
 
@@ -57,6 +57,7 @@ HAPROXYACCESS=0       # We default OPEN access through the proxy, subject to cha
 PROXYADDRESS=1        # So that the overall "proxy" to the cluster is BASENETWORK.PROXY e.g. 192.168.140.1
 VNCPORT=5920          # We'll leave the firt few ports open for traditional VNC uses
 SDNTYPE=OVNKubernetes # Just in case... it can also be: OpenShiftSDN
+AGENTBASEDINSTALLER="" # It's a question now. YAKKO 7.0++
 # The BASEMACADDRESS is missing the last two entries/hexes. The second to last is calculated on
 # the last number of the BASEMACNETWORK, in case two clusters run on the same box, to prevent 
 # virtual network confusion, even if perhaps... it may work without conflict. Original code had
@@ -146,6 +147,7 @@ populate-cluster-config-file() {
 		echo "OCPINSTALLMINORVERSION=${OCPINSTALLMINORVERSION}"
 		echo "OCPDOWNLOADIMAGES=${OCPDOWNLOADIMAGES}"
 		echo "OCPVMDISKDIR=${OCPVMDISKDIR}"
+		echo "OCPINSTALLSOURCE=$OCPINSTALLSOURCE" 
 		echo "NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml"
 		echo "NETWORKADDRESSSLOT=20"
 		echo "NODECOUNT=0"
@@ -166,6 +168,7 @@ populate-cluster-config-file() {
 		echo "REDUCEPROMETHEUES=${REDUCEPROMETHEUS}"
 		echo "WEBSERVERPORT=${WEBSERVERPORT}"
 		echo "LOGINFILEHASPASSWORD=0"  
+		echo "AGENTBASEDINSTALLER=$AGENTBASEDINSTALLER"  
 
 		# These exist in lastclusterconfig too, but resizing will change it here only
 		echo "MASTERNODECOUNT=${MASTERNODECOUNT}"
@@ -188,7 +191,9 @@ populate-user-definitions() {
 	# Basic directories 
 	CLUSTERSETUPDIR=${YAKKODIRECTORY}/install-${CLUSTERNAME}-${CLUSTERDOMAIN}
 	STUBFILES=${CLUSTERSETUPDIR}/stubfiles
-
+	OCPINSTALLVERSION=$OCPVERSION
+	OCPINSTALLSOURCE=$IMAGEREPO/$OCPINSTALLVERSION
+	
 	# Added ${PROXYADDRESS} below so that you can repeat cluster names without interefering with the virtual network
 	NETWORKNAME=net-${YAKKOSCRIPTNAME}-${CLUSTERNAME}-${CLUSTERDOMAIN}-${YAKKOID}
 	NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml
@@ -461,9 +466,8 @@ print-question-separator() {
 
 print-question-skip() {
 	echo
-	echo
 	tput bold
-	print-in-colour lightblue "[$((QUESTIONNUM++))/${QUESTIONSTOTAL}] $*:" 
+	print-in-colour lightblue "[$((QUESTIONNUM++))/${QUESTIONSTOTAL}] $*"
 	tput sgr0
 }
 
@@ -534,11 +538,22 @@ cleanup-and-exit() {
 	if [ -n "$TEXTMESSAGE" ]
 	then
 		echo
-		print-in-colour $TEXTCOLOUR "$TEXTMESSAGE - exiting..."
+		print-in-colour $TEXTCOLOUR "$TEXTMESSAGE. Exiting..."
 	fi
 	echo # Make it all look pretty
 	
 	exit
+}
+
+
+check-for-error-and-print() {
+
+	# There is no error found
+	[ "$1" -eq 0 ] && return
+
+	# Else... Doom!
+	echo
+	print-in-colour red  "ERROR: $2"
 }
 
 
@@ -568,7 +583,7 @@ check-for-error-and-exit() {
 		[ $? -eq 0 ] && ${CURRENTSTAGE} rollback 
 	fi
 
-	#We had to print that there was an eaerlier error so we cannot now pass ERROR text to cleanup-and-exit
+	#We had to print that there was an earlier error so we cannot now pass ERROR text to cleanup-and-exit
 	cleanup-and-exit
 }
 
@@ -982,7 +997,7 @@ get-yakko-host-ip() {
 	# update - looks up the IP and changes it, no questions asked
 	NOTIFYCHANGE=$1
 
-	if [ $HAPROXYACCESS -eq 1 -a "$NOTIFYCHANGE" != update ]
+	if [ "$HAPROXYACCESS" == 1 -a "$NOTIFYCHANGE" != update ]
 	then 
 		#VERSION 7 check - if this is a 'private' cluster (no external access), then do not check this
 		return 1 # IP address did "not change" - this is not important
@@ -1624,9 +1639,8 @@ build-ocp-node() {
 		sed -i "/addingressrouternode80/a\    server ${NODEHOSTNAME} ${BASENETWORK}.${NETWORKADDRESSSLOT}:80 check inter 1s" ${STUBFILES}/haproxy.cfg
 		sed -i "/addingressrouternode443/a\    server ${NODEHOSTNAME} ${BASENETWORK}.${NETWORKADDRESSSLOT}:443 check inter 1s" ${STUBFILES}/haproxy.cfg
 		cp ${STUBFILES}/haproxy.cfg ${SYSTEMSTUBFILE_HAPROXY} 
-		#systemctl restart haproxy
-		#check-for-error-and-exit $? "Could not start HA Proxy, the cluster cannot function without this."
 		process-system-service-state restart haproxy exitonfail
+		echo
 
 		# Update the last mac address used in the CLUSTERCONFIGFILE 
 		((NETWORKADDRESSSLOT++))
@@ -1649,13 +1663,85 @@ build-ocp-node() {
 	echo
 	echo "Configuration:"
 	echo "- Name: ${NODEVMNAME}"
-       	echo "- vCPUs:  ${NODEVCPUS}"
+       	echo "- vCPUs: ${NODEVCPUS}"
 	echo "- Memory: ${NODERAMSIZE} MiB"
        	echo "- MAC address: ${NODEMACADDRESS}"
-	echo "- Disk size: ${NODEDISKSIZE}"
+	echo "- Disk size: ${NODEDISKSIZE}" GiB
 	echo "- VM file: ${OCPVMDISKDIR}/${NODEVMNAME}.qcow2"
 
-	if [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
+	if [ "${OCPINSTALLMINORVERSION}" -ge 14 -a -n "$AGENTBASEDINSTALLER" ]  # We are on OCP 4.14 or higher AND we are using the agent based installer
+	then
+		if [ ${MASTERNODECOUNT} -eq 1 -a ${NODEVCPUS} -lt 8 ]
+		then
+			echo
+			print-in-colour orange "ATTENTION: Building SNO with the OpenShift Agent-Based Installer requires 8 vCPUs."
+			print-in-colour orange "           Adjusting the vCPU count for install. If required, adjust down later!"
+			echo
+			NODEVCPUS=8
+		fi
+
+		# see this note for further info on kernel args: https://access.redhat.com/solutions/7005590
+		# ignition.firstboot ignition.platform.id=metal coreos.live.rootfs_url=http://example.com/path/agent.x86_64-rootfs.img
+		
+		#THE BELOW ATTEMPTS TO BUILD IMAGES WITH PXE BOOT AND AGENT, BUT ALWAYS FAILS WITH THIS IN CONSOLE OF VM:
+		#openshift install ignition: no config provided by user
+		#virt-install \
+		#	--name ${NODEVMNAME} \
+		#	--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+		#	--vcpus ${NODEVCPUS} \
+		#	--cpu host,+vmx \
+		#	--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
+		#	--install kernel=${WEBSERVERURL}/${OCPINSTALLVERSION}/agent.x86_64-vmlinuz,initrd=${WEBSERVERURL}/${OCPINSTALLVERSION}/agent.x86_64-initrd.img,kernel_args_overwrite=yes,kernel_args="coreos.inst.install_dev=/dev/vda coreos.live.rootfs_url=${WEBSERVERURL}/${OCPINSTALLVERSION}/agent.x86_64-rootfs.img coreos.inst.insecure ip=dhcp rd.neednet=1 ignition.firstboot ignition.platform.id=metal" \
+		#	--os-variant=rhel9-unknown \
+		#	--graphics vnc,port=${VNCPORT}  \
+		#	--network network=${NETWORKNAME},mac=${NODEMACADDRESS}  \
+		#	--noautoconsole --wait -1 \
+		#	--metadata description="YAKKODIRECTORY=${YAKKODIRECTORY}
+#CLUSTERFQDN=$CLUSTERFQDN
+#BASENETWORK=$BASENETWORK" 
+
+		#EXCLUDING THIS FOR NOW
+		#--cdrom ${IMAGEREPO}/${OCPINSTALLVERSION}/agent.x86_64.iso \
+		virt-install \
+		        --name ${NODEVMNAME} \
+			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			--vcpus ${NODEVCPUS} \
+			--cpu host,+vmx \
+			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
+			--os-variant=rhel9-unknown \
+			--graphics vnc,port=${VNCPORT}  \
+			--network network=${NETWORKNAME},mac=${NODEMACADDRESS}  \
+			--noautoconsole \
+			--wait -1 \
+			--metadata description="YAKKODIRECTORY=${YAKKODIRECTORY} \
+CLUSTERFQDN=$CLUSTERFQDN
+BASENETWORK=$BASENETWORK" \
+			--print-xml > ${OCPVMDISKDIR}/${NODEVMNAME}.xml
+		BUILDOCPNODERESULT=$?
+		check-for-error-and-print $BUILDOCPNODERESULT "Could not build XML definition of host ${NODEVMNAME}"
+		[ $BUILDOCPNODERESULT -ne 0 ] && return $BUILDOCPNODERESULT
+
+		virsh define ${OCPVMDISKDIR}/${NODEVMNAME}.xml
+		BUILDOCPNODERESULT=$?
+		check-for-error-and-print $BUILDOCPNODERESULT "Could not define host ${NODEVMNAME} from XML ${OCPVMDISKDIR}/${NODEVMNAME}.xml"
+		[ $BUILDOCPNODERESULT -ne 0 ] && return $BUILDOCPNODERESULT
+
+		virt-xml ${NODEVMNAME} --add-device --disk=${IMAGEREPO}/${OCPINSTALLVERSION}/agent.x86_64.iso,device=cdrom,target.dev=sdc --quiet
+		BUILDOCPNODERESULT=$?
+		check-for-error-and-print $BUILDOCPNODERESULT "Could not attach ISO image to host ${NODEVMNAME}"
+		[ $BUILDOCPNODERESULT -ne 0 ] && return $BUILDOCPNODERESULT
+
+		virt-xml ${NODEVMNAME} --edit target=vda --disk="boot_order=1" --quiet
+
+		echo "Starting up node ${NODEVMNAME}..."
+		virt-xml ${NODEVMNAME} --edit target=sdc --disk="boot_order=2" --start  --quiet
+		BUILDOCPNODERESULT=$?
+		check-for-error-and-print $BUILDOCPNODERESULT "Failed to boot node ${NODEVMNAME}"
+		[ $BUILDOCPNODERESULT -ne 0 ] && return $BUILDOCPNODERESULT
+
+		echo
+
+	elif [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 		virt-install \
 			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
@@ -1709,8 +1795,6 @@ BASENETWORK=$BASENETWORK" \
 
 	# We clear any old entries in known hosts so that user sees no nasty security business
 	sed -i "/${NODEHOSTNAME}/d" /root/.ssh/known_hosts > /dev/null 2>&1
-
-	#echo
 
 	return $BUILDOCPNODERESULT
 }
@@ -5412,11 +5496,9 @@ process-stage-haproxy() {
 		     		cleanup-and-exit
 			fi		
 
-			#cat /etc/haproxy/haproxy.cfg 2>/dev/null | grep mode | grep http >/dev/null 2>&1
 			cat /etc/haproxy/haproxy.cfg | grep bind | awk '{ print $2 }' | cut -f2 -d : | grep 80 >/dev/null 2>&1
 			if [ $? -eq 0 ]
 			then
-				#echo "The system's /etc/haproxy/haproxy.cfg seems to contain a mode directive for http"
 				echo "The system's /etc/haproxy/haproxy.cfg seems to contain a BIND directive for port 80"
 				echo "This will prevent HAproxy working for OpenShift if you expect to run apps over HTTP/port 80."
 				ask-user "Do you want to continue with this configuration for HAproxy" Y noauto
@@ -5652,37 +5734,9 @@ process-stage-downloadocpbinaries() {
 				# Note that this script bundles your client and RHCOS dependencies under the client version number
 				# we treat bad errors here differently to try to avoid repeating entire downloads
 
-				echo "Downloading RHCOS installer files... -> $PWD"
+				echo "Downloading OpenShift Binaries... -> $PWD"
 	
-				if [ "${OCPINSTALLMINORVERSION}" -ge 6 ]
-				then
-
-					echo "Downloading the OCP installer -> $PWD"
-					# DOWNLOAD CLIENT STUFF FIRST (as of 4.6 it is common to all versions)
-					wget $OCPDOWNLOADCLIENT/openshift-install-linux.tar.gz -O - | tar xz
-					[ $? -ne 0 ] && { echo "Error downloading *openshift-installer*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-	
-					echo "Downloading the OCP client -> $PWD"
-					wget $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz -O - | tar xz 
-					[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### KERNEL
-					wget $OCPDOWNLOADIMAGES/rhcos-live-kernel-x86_64
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-				
-					##### INITRAMFS
-					wget $OCPDOWNLOADIMAGES/rhcos-live-initramfs.x86_64.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### ROOTFS
-					wget $OCPDOWNLOADIMAGES/rhcos-live-rootfs.x86_64.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-rootfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### METAL
-					wget $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-					
-				elif [ "${OCPINSTALLMINORVERSION}" -ge 3 ] # Version 4.5 or earlier
+				if [ "${OCPINSTALLMINORVERSION}" -ge 3 ]
 				then
 					echo "Downloading the OCP installer -> $PWD"
 					# DOWNLOAD CLIENT STUFF FIRST (as of 4.6 it is common to all versions)
@@ -5692,18 +5746,6 @@ process-stage-downloadocpbinaries() {
 					echo "Downloading the OCP client -> $PWD"
 					wget $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz -O - | tar xz 
 					[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### KERNEL
-					wget $OCPDOWNLOADIMAGES/rhcos-installer-kernel-x86_64
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-				
-					### INITRAMFS
-					wget $OCPDOWNLOADIMAGES/rhcos-installer-initramfs.x86_64.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### METAL
-					wget $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 				else
 					echo "Downloading the OCP installer -> $PWD"
 					wget $OCPDOWNLOADCLIENT/openshift-install-linux-$OCPVERSION.tar.gz -O - | tar xz
@@ -5712,18 +5754,56 @@ process-stage-downloadocpbinaries() {
 					echo "Downloading the OCP client -> $PWD"
 					wget $OCPDOWNLOADCLIENT/openshift-client-linux-$OCPVERSION.tar.gz -O - | tar xz 
 					[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### KERNEL
-					wget $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-kernel
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+				fi
+
+				if [ -z "$AGENTBASEDINSTALLER" ]
+				then
+					echo "Downloading RHCOS installer files... -> $PWD"
+
+					if [ "${OCPINSTALLMINORVERSION}" -ge 6 ]
+					then
+						##### KERNEL
+						wget $OCPDOWNLOADIMAGES/rhcos-live-kernel-x86_64
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+					
+						##### INITRAMFS
+						wget $OCPDOWNLOADIMAGES/rhcos-live-initramfs.x86_64.img
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
 				
-					### INITRAMFS
-					wget $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-initramfs.img
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
-			
-					##### METAL
-					wget $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-metal-bios.raw.gz
-					[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+						##### ROOTFS
+						wget $OCPDOWNLOADIMAGES/rhcos-live-rootfs.x86_64.img
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-live-rootfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+				
+						##### METAL
+						wget $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+						
+					elif [ "${OCPINSTALLMINORVERSION}" -ge 3 ] # Version 4.5 or earlier
+					then
+						##### KERNEL
+						wget $OCPDOWNLOADIMAGES/rhcos-installer-kernel-x86_64
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+					
+						##### INITRAMFS
+						wget $OCPDOWNLOADIMAGES/rhcos-installer-initramfs.x86_64.img
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+				
+						##### METAL
+						wget $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+					else
+						##### KERNEL
+						wget $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-kernel
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-kernel*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+					
+						### INITRAMFS
+						wget $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-initramfs.img
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-initramfs*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+				
+						##### METAL
+						wget $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-metal-bios.raw.gz
+						[ $? -ne 0 ] && { echo 'Error downloading *rhcos-metal*, exiting...'; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit; } 
+					fi
 				fi
 			fi
 
@@ -5813,7 +5893,6 @@ process-stage-httpserver() {
 
 			# Now that we know what we are running up, we can set the directory to provide the sources
 			# From the below dir, things will get cookin'
-			OCPINSTALLSOURCE=$IMAGEREPO/$OCPINSTALLVERSION
 			OCCOMMAND=${OCPINSTALLSOURCE}/oc
 			echo "OCP will be made available by HTTP server from directory $OCPINSTALLSOURCE"
 			echo
@@ -5862,7 +5941,6 @@ process-stage-httpserver() {
 			process-system-service-state restart httpd exitonfail
 			systemctl enable httpd
 
-			echo "OCPINSTALLSOURCE=$OCPINSTALLSOURCE" >> $CLUSTERCONFIGFILE
 			echo "OCCOMMAND=${OCCOMMAND}" >> $CLUSTERCONFIGFILE
 		}
 	}
@@ -6023,14 +6101,16 @@ process-stage-generateocpinstallerconfig() {
 				echo "  clusterNetwork:"
 				echo "  - cidr: 10.128.0.0/14 "
 				echo "    hostPrefix: 23"
-				echo "  networkType: ${SDNTYPE}"
+				echo "  machineNetwork:"
+				echo "  - cidr: ${BASENETWORK}.0/24 "
 				echo "  serviceNetwork:"
 				echo "  - 172.30.0.0/16"
+				echo "  networkType: ${SDNTYPE}"
 				echo "platform:"
 				echo "  none: {} "
 				echo "fips: false "
-				echo "pullSecret: '$PULLSECRET' "
-				echo "sshKey: '$SSHPUBKEY'"
+				echo "pullSecret: '${PULLSECRET}' "
+				echo "sshKey: '${SSHPUBKEY}'"
 				if [ -n "${MIRRORSERVER}" ]
 				then
 					echo "imageContentSources:"
@@ -6043,10 +6123,66 @@ process-stage-generateocpinstallerconfig() {
 				fi
 		
 			} > ${CLUSTERSETUPDIR}/install-config.yaml
-	
+		 
 			# we make a copy for later review as this gets deleted by the create-manifests stage
 			cp ${CLUSTERSETUPDIR}/install-config.yaml ${CLUSTERSETUPDIR}/install-config.yaml.original
 			echo "Making a reference copy of install-config.yaml as install-config.yaml.original"
+
+			if [ "$AGENTBASEDINSTALLER" == "agent" ]
+			then
+				# The agent based installer requires a agent-config.yaml for the network
+				# As YAKKO already has DHCP config builtin, this is all that's required, based on
+				# https://docs.openshift.com/container-platform/4.14/installing/installing_with_agent_based_installer/preparing-to-install-with-agent-based-installer.html#dhcp
+				
+				# This next param is for testing the Agent Based installer DHCP feature as explained in
+				# https://docs.openshift.com/container-platform/4.14/installing/installing_with_agent_based_installer/preparing-to-install-with-agent-based-installer.html#dhcp
+				ABIOPTIONALFORDHCP=1
+				{
+					echo "apiVersion: v1alpha1"
+					echo "kind: AgentConfig"
+					echo "metadata:"
+					echo "  name: ${CLUSTERNAME}"
+					echo "rendezvousIP: ${MASTER0IP}"
+					if [ $ABIOPTIONALFORDHCP == 0 ]
+					then
+						echo "hosts:"
+						echo "  - hostname: master-0"
+						echo "    role: master"
+						echo "    interfaces:"
+						echo "      - name: enp1s0"
+						echo "        macAddress: ${MASTER0MAC}"
+						echo "    rootDeviceHints: "
+						echo "      deviceName: /dev/vda"
+						echo "    networkConfig:"
+						echo "      interfaces:"
+						echo "        - name: enp1s0"
+						echo "          type: ethernet"
+						echo "          state: up"
+						echo "          mac-address: ${MASTER0MAC}"
+						echo "          ipv4:"
+						echo "            enabled: true"
+						echo "            address:"
+						echo "              - ip: ${MASTER0IP}"
+						echo "                prefix-length: 23"
+						echo "            dhcp: false"
+						echo "      dns-resolver:"
+						echo "        config:"
+						echo "          server:"
+						echo "            - ${BASENETWORK}.1"
+						echo "      routes:"
+						echo "        config:"
+						echo "        - destination: 0.0.0.0/0"
+						echo "          next-hop-address: ${BASENETWORK}.1"
+						echo "          next-hop-interface: enp1s0"
+						echo "          table-id: 254"
+					fi
+		  		} > ${CLUSTERSETUPDIR}/agent-config.yaml
+
+				# we make a copy for later review as this gets deleted by the create-manifests stage
+				cp ${CLUSTERSETUPDIR}/agent-config.yaml ${CLUSTERSETUPDIR}/agent-config.yaml.original
+				echo "Making a reference copy of agent-config.yaml as agent-config.yaml.original"
+			fi
+	
 	
 		}
 	}
@@ -6061,13 +6197,13 @@ process-stage-generateocpinstallerconfig() {
 }
 
 
-process-stage-ingestmanifestsandignition() {
+process-stage-create-ingestmanifestsandignition() {
 
 	#stageingestmanifest
 
 	[ $1 == "progress" ] && {
 
-                advance-stage-progression "OCP Ingest manifest and ignition files"  && return
+                advance-stage-progression "Create OCP Ingest manifest and ignition files"  && return
 
 		if [ ${PAUSEFORCONFIGEDIT} -eq 0 ]
 		then
@@ -6143,20 +6279,20 @@ process-stage-build-ocp-masternodes() {
 
 	[ $1 == "progress" ] && {
 
-		advance-stage-progression "KVM Master Node(s) Configuration"  && return
+		advance-stage-progression "KVM Master Node(s) Configuration" && return
 
 		ask-user "Configure OCP master VM hosts" "Y" && {
 
-			build-ocp-node master-0 ${MASTER0MAC} ${MASTERVCPUS} ${MASTERRAMSIZE} ${MASTERDISKSIZE} master.ign
+			build-ocp-node master-0 ${MASTER0MAC} ${MASTERVCPUS} ${MASTERRAMSIZE} ${MASTERDISKSIZE} master.ign 
 			check-for-error-and-exit $? "Could not build VM for node [master-0]"
 
 			[ ${MASTERNODECOUNT} -eq 3 ] && {
 				# It's either 1 or 3 nodes, never 2 AFAWK in 2020
 
-				build-ocp-node master-1 ${MASTER1MAC} ${MASTERVCPUS} ${MASTERRAMSIZE} ${MASTERDISKSIZE} master.ign
+				build-ocp-node master-1 ${MASTER1MAC} ${MASTERVCPUS} ${MASTERRAMSIZE} ${MASTERDISKSIZE} master.ign 
 				check-for-error-and-exit $? "Could not build VM for node [master-1]"
 
-				build-ocp-node master-2 ${MASTER2MAC} ${MASTERVCPUS} ${MASTERRAMSIZE} ${MASTERDISKSIZE} master.ign
+				build-ocp-node master-2 ${MASTER2MAC} ${MASTERVCPUS} ${MASTERRAMSIZE} ${MASTERDISKSIZE} master.ign 
 				check-for-error-and-exit $? "Could not build VM for node [master-2]"
 			}
 		}
@@ -6288,7 +6424,7 @@ process-stage-startocpbootstrap() {
 	
 			while true
 			do
-				$OCPINSTALLSOURCE/openshift-install --dir=$CLUSTERSETUPDIR wait-for bootstrap-complete --log-level "${OCPINSTALLERLOGLEVEL}"
+				$OCPINSTALLSOURCE/openshift-install --dir=$CLUSTERSETUPDIR $AGENTBASEDINSTALLER wait-for bootstrap-complete --log-level "${OCPINSTALLERLOGLEVEL}"
 	
 				if [ $? -eq 0 ]
 				then
@@ -6322,13 +6458,40 @@ process-stage-startocpbootstrap() {
 }
 
 
+process-stage-build-abi-boot-assets() {
+
+	#stagebuildbootassets
+	#pxe testing
+	
+	[ $1 == "progress" ] && {
+
+        advance-stage-progression "Build boot assets for Agent Based Installer"  && return
+
+		ask-user "Build boot assets" "Y" && {
+
+			${OCPINSTALLSOURCE}/openshift-install agent create pxe-files --dir=$CLUSTERSETUPDIR
+			mv $CLUSTERSETUPDIR/boot-artifacts/* ${IMAGEREPO}/${OCPINSTALLVERSION} >/dev/null
+			rmdir $CLUSTERSETUPDIR/boot-artifacts 
+
+			${OCPINSTALLSOURCE}/openshift-install agent create image --dir=$CLUSTERSETUPDIR
+			mv $CLUSTERSETUPDIR/agent.x86_64.iso ${IMAGEREPO}/${OCPINSTALLVERSION} >/dev/null
+			check-for-error-and-exit $? "Failed to create Agent-Based Installer boot assets with error code [$?] from openshift-install"
+		}
+	}		
+
+	[ $1 == "rollback" ] && {
+		rollback-stage-progression "Agent Based Installer boot assets"
+	}
+}
+
+
 process-stage-approvecsrs() {
 
 	#stageapprovecsrs
 
 	[ $1 == "progress" ] && {
 
-                advance-stage-progression "CSR Background Approval"  && return
+        advance-stage-progression "CSR Background Approval"  && return
 
 		ask-user "Approve pending/recurring CSRs" "Y" && {
 
@@ -6646,7 +6809,7 @@ process-stage-gatherclusterconfiguration() {
 				WORKERNODECOUNT=0
 			}
 			[ -z "$OCPVERSION" ] && { 
-				print-in-colour orange "NOTE: OCPVERSION was not set, defaulting to LATEST"
+				print-in-colour lightblue "NOTE: OCPVERSION was not set, defaulting to 'latest'"
 				echo
 				OCPVERSION=latest
 			}
@@ -6695,7 +6858,10 @@ process-stage-gatherclusterconfiguration() {
 
 			# This will be necessary later and no point in saving an individual value
 
-			get-rhcos-dependency # This sets OCPDOWNLOADIMAGES and RHCOS version
+			if [ -z "$AGENTBASEDINSTALLER" ]
+			then
+				get-rhcos-dependency # This sets OCPDOWNLOADIMAGES and RHCOS version
+			fi
 		else
 			# THIS SECTION IS ALL ABOUT QUESTIONS 
 		
@@ -6808,9 +6974,11 @@ process-stage-gatherclusterconfiguration() {
 			# identifying 'this' host - this can be tricky as we are looking for the interface with the cable (hopefully!)
 			# we cycle through the physical ports and compare them to those that are up until we nail one
 			print-question-separator HOST IP ADDRESS
-			echo "This will be used to build the cluster on this host, it can change later."
+			echo "This will be used to build the cluster on this host, it's not permanently required."
 			echo "If this is a laptop, you may want to apply 'yakko infra changeaccess' when done."
 			YAKKOHOSTIP=""
+			#The below would be used if the OPEN ACCESS question is reinstated...
+			#unset HAPROXYACCESS #This so get-yakko-host-ip doesn't make assumptions yet
 			get-yakko-host-ip 
 
 
@@ -6852,9 +7020,18 @@ process-stage-gatherclusterconfiguration() {
 			#else
 			#	HAPROXYACCESS=1
 			#fi
-
 			
-			# WE ARE GETTING READY TO DOWNLOAD THE OPENSHIFT BINARIES
+			### QUESTION: Use the OpenShift Agent Based Installed
+			print-question-separator "OPENSHIFT AGENT BASED INSTALLER"
+			echo "YAKKO can use the OpenShift Agent Based Installer to create a cluster with the latest version"
+			echo "and without needing a bootstrap host. This is ideal for machines with smaller RAM footprints."
+			echo "Note that this will require 8 vCPUs in the case of SNO builds."
+			ask-user "Do you want to leverage the OpenShift Agent-Based Installer?" Y
+			if [ $? -eq 0 ]
+			then
+				AGENTBASEDINSTALLER=agent
+				get-openshift-latest 
+			fi
 
 			### QUESTION: Disconnected install 
 			print-question-separator "DISCONNECTED INSTALL (EXPERIMENTAL!)"
@@ -6917,8 +7094,15 @@ process-stage-gatherclusterconfiguration() {
 				echo "as found in the \"images\" directory of another server that has used ${YAKKONAME} download it."
 				echo "Simply copy the version number directory from that server to this one under \"images\"."
 
-				print-question-skip Skipping online retrieval of OPENSHIFT VERSION
-			else
+				print-question-skip "OPENSHIFT VERSION (skip): already set as $OCPVERSION"
+			fi
+
+			if [ -z "$OCPVERSION" ]
+			then
+				# We arrive here because the user did not choose the Agent-Based Installer ("latest")
+				# Nor did he provide a version from a mirror, so it's not set.
+				### QUESTION - OPENSHIFT VERSION
+
 				MIRRORSERVER=""  # This in case it was setup in clusterbuilddefaults...
 
 				### QUESTION: Cluster version
@@ -7064,10 +7248,9 @@ process-stage-gatherclusterconfiguration() {
 						echo
 					fi
 				done
+			else
+				print-question-skip "OPENSHIFT VERSION (skip): already set as $OCPVERSION"
 			fi
-
-			# We remove the CLIENT word to make it less confusing if someone reads the ${CLUSTERCONFIGFILE} file
-			OCPINSTALLVERSION=$OCPVERSION
 			
 
 			### QUESTION: Get repository for VMs ## Stored in BUILD DEFAULTS
@@ -7170,46 +7353,52 @@ process-stage-gatherclusterconfiguration() {
 
 	
 				### QUESTION: Add worker nodes at build ##
-				print-question-separator WORKER NODE COUNT
-				if [ -z "$WORKERNODECOUNT" ]
+				if [ -n "$AGENTBASEDINSTALLER" -a ${MASTERNODECOUNT} -eq 1 ]
 				then
-					# On first run, there will be no worker node count defined, let's offer 2
-					if [ ${MASTERNODECOUNT} -eq 3 ]
+					print-question-skip "WORKER NODE COUNT (skip): Agent-Based Installer cannot build worker nodes with single master"
+					WORKERNODECOUNT=0
+				else
+					print-question-separator WORKER NODE COUNT
+					if [ -z "$WORKERNODECOUNT" ]
 					then
-						WORKERNODECOUNT=2
-					else
-						WORKERNODECOUNT=0
+						# On first run, there will be no worker node count defined, let's offer 2
+						if [ ${MASTERNODECOUNT} -eq 3 ]
+						then
+							WORKERNODECOUNT=2
+						else
+							WORKERNODECOUNT=0
+						fi
 					fi
-				fi
-				while true
-		                do
-					echo "Worker nodes can be built at cluster creation or later."
-					echo "To build a cluster with ONLY schedulable MASTER node(s), type '0'"
-					echo -n "How many worker nodes do you want to configure at cluster build time [$WORKERNODECOUNT]: "
-					read VALUE
-					if [ -n "$VALUE" ]
-					then
-						if ! [[ $VALUE =~ $NUMBERRE ]] 
+					while true
+			                do
+						echo "Worker nodes can be built at cluster creation or later."
+						echo "To build a cluster with ONLY schedulable MASTER node(s), type '0'"
+						echo -n "How many worker nodes do you want to configure at cluster build time [$WORKERNODECOUNT]: "
+						read VALUE
+						if [ -n "$VALUE" ]
 						then
-							echo "Error: Not a number. Try again..."
-							continue
-						elif [ ${VALUE} -gt ${MAXWORKERNODES} ]
-						then
-							echo "You need to specify a number of workers up to [${MAXWORKERNODES}]"
-							continue
-						elif [ $VALUE -eq 0 ]
-						then
-							echo "No worker nodes were requested. You can add nodes later with YAKKO."
+							if ! [[ $VALUE =~ $NUMBERRE ]] 
+							then
+								echo "Error: Not a number. Try again..."
+								continue
+							elif [ ${VALUE} -gt ${MAXWORKERNODES} ]
+							then
+								echo "You need to specify a number of workers up to [${MAXWORKERNODES}]"
+								continue
+							elif [ $VALUE -eq 0 ]
+							then
+								echo "No worker nodes were requested. You can add nodes later with YAKKO."
+								break
+							fi
+							break
+						else
+							# Note that if $VALUE is 0 then we already have WORKERNODECOUNT properly set
+							VALUE=$WORKERNODECOUNT
 							break
 						fi
-						break
-					else
-						# Note that if $VALUE is 0 then we already have WORKERNODECOUNT properly set
-						VALUE=$WORKERNODECOUNT
-						break
-					fi
-				done
-				WORKERNODECOUNT=${VALUE}
+					done
+					WORKERNODECOUNT=${VALUE}
+				fi
 
 	
 				### QUESTION: RAM size confirmation (WORKERS)  ##
@@ -7232,7 +7421,7 @@ process-stage-gatherclusterconfiguration() {
 				 		break
 				 	done
 				else
-					print-question-skip Skipping WORKER NODE RAM configuration
+					print-question-skip "WORKER NODE RAM CONFIGURATION (skip): there are no worker nodes"
 				fi
 	
 				TOTMASTERSRAM=$(($MASTERNODECOUNT * $MASTERRAMSIZE)) # This is in MB
@@ -7251,18 +7440,18 @@ process-stage-gatherclusterconfiguration() {
 				echo "Requested OpenShift configuration requires:"
 			        echo "- RAM:  ${TOTCLUSTERRAM} MiB "
 				echo "- DISK: ${TOTCLUSTERDISK} GiB "
-				echo
-				echo "Additionally you will need to allow some RAM for the bootstrap VM."
-				echo "This machine is currently defined with $(( ${BOOTSTRAPNODERAMSIZE}/1000 )) GB RAM, no testing has been done with using swap in its entirety."
-				echo
+				if [ -z "$AGENTBASEDINSTALLER" ]
+				then
+					echo
+					echo "Additionally you will need to allow some RAM for the bootstrap VM."
+					echo "This machine is currently defined with $(( ${BOOTSTRAPNODERAMSIZE}/1000 )) GB RAM, no testing has been done with using swap in its entirety."
+				fi
 
 				if [ ${SYSTEMAVAILRAM} -lt ${TOTCLUSTERRAM} ]
 				then
 					CAPACITYALERT=1
-					echo
 					print-in-colour orange "Not enough free RAM available for your desired configuration:"
 					print-in-colour orange "Total requirement is ${TOTCLUSTERRAM} MiB but system only has ${SYSTEMAVAILRAM} MiB free"
-					echo 
 				fi
 	
 				TOTSYSTEMDISK=$(df -BGiB ${OCPVMDIR} | grep -v "^Filesystem" | awk '{print $4}' | cut -f1 -dG) 
@@ -7437,16 +7626,27 @@ yakko-process-stages() {
 	process-stage-virtualnetwork ${ACTION}
 	process-stage-dns ${ACTION}
 
-	process-stage-httpserver ${ACTION}
 	process-stage-haproxy ${ACTION}
 	process-stage-firewall ${ACTION}
 	process-stage-generateocpinstallerconfig ${ACTION}
-	process-stage-ingestmanifestsandignition ${ACTION}
-	process-stage-build-bootstrapnode ${ACTION}
-	process-stage-build-ocp-masternodes ${ACTION}
-	process-stage-build-ocp-workernodes ${ACTION}
+
+	# this is the original YAKKO with no agent based installer support
+	if [ -z "$AGENTBASEDINSTALLER" ]
+	then
+		process-stage-create-ingestmanifestsandignition ${ACTION}
+		process-stage-httpserver ${ACTION}
+		process-stage-build-bootstrapnode ${ACTION}
+		process-stage-build-ocp-masternodes ${ACTION}
+		process-stage-build-ocp-workernodes ${ACTION}
+		process-stage-approvecsrs ${ACTION}
+	else
+		# We are using the agent based installer!
+		process-stage-build-abi-boot-assets ${ACTION}
+		process-stage-httpserver ${ACTION}
+		process-stage-build-ocp-masternodes ${ACTION}
+		process-stage-build-ocp-workernodes ${ACTION}
+	fi
 	process-stage-startocpbootstrap ${ACTION}
-	process-stage-approvecsrs ${ACTION}
 	process-stage-reduceprometheusmemory ${ACTION}
 	process-stage-waitforocpinstalltocomplete ${ACTION}
 	process-stage-postinstall ${ACTION}
@@ -7646,7 +7846,7 @@ then
 		break
 	done
 
-	if [ -e "${CANDIDATEYAKKODIRECTORY}/${YAKKONAME}" ]
+	if [ -e "${CANDIDATEYAKKODIRECTORY}/${YAKKOSCRIPTNAME}" ]
 	then
 		if [ $(ls -i "${CANDIDATEYAKKODIRECTORY}/${YAKKONAME}" | awk '{ print $1 }') -eq $(ls -i ${YAKKOEXECUTABLE} | awk '{ print $1 }') ]
 		then

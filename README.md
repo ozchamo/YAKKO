@@ -10,10 +10,11 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 7.00 (20231212.0140)
+## CURRENT VERSION: 7.1 (20240111.1741)
 What's new? 
 
 This version brings a lot of change under the covers:
+- Just in! 7.1 adds a little big feature: Support for the Agent-Based Installer! Look out for the question.
 - Stay tuned for the YAKKO blog coming soon at blogs.redhat.com!
 - Tested on RHEL 9.2, RHEL 9.3, Fedora 38 and Fedora 39
 - Tested with OpenShift 4.13 and 4.14 (SNO and multi-master/multi-node configs, including 1 master and multiple workers)
