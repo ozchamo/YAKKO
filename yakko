@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=7.1
-YAKKODATE=20240111.1741
+YAKKOVERSION=8.00
+YAKKODATE=20240709.1247
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
