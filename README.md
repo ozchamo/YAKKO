@@ -22,8 +22,8 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
   - So what's up with the URLs for the above? Community sharing! Github enabled, repos available, but depend on the raws!  
     - For YAKKO templates visit: https://github.com/ozchamo/yakko-build-templates
     - For post-cluster-installers visit: https://github.com/ozchamo/cluster-post-installers-for-yakko  
-    - Quick win? Run this command and enjoy a YAKKO cluster 1+2 with OpenShift Virt using NFS:
-      yakko buildclusterfromtemplate https://raw.githubusercontent.com/ozchamo/yakko-build-templates/main/1m%2B2w-ocpvirt
+    - Quick win? Run this command and enjoy a YAKKO cluster 1+2 with OpenShift Virt using NFS:  
+      'yakko buildclusterfromtemplate https://raw.githubusercontent.com/ozchamo/yakko-build-templates/main/1m%2B2w-ocpvirt'
     - Which is not too different from running up a cluster of your own design and adding the below as the post-cluster-install:
       https://github.com/ozchamo/cluster-post-installers-for-yakko/tree/main/ocpcnv-nfs-csi-install
     - What's really cool about this is that you are using nested virtualisation!
