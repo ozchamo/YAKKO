@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=8.00
-YAKKODATE=20240709.1247
+YAKKOVERSION=8.01
+YAKKODATE=20240712.1749
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -380,6 +380,8 @@ start-spinner() {
 		printf "$SPINNERSTRING %s\r" "${cursor[i++ % ${#cursor[@]}]}";      
 		sleep 0.25
 		trap "tput cnorm;exit" SIGTERM # Restore the cursor and exit on signal
+		trap "tput cnorm;exit" SIGINT  # Restore the cursor and exit on signal
+		trap "tput cnorm;exit" SIGQUIT # Restore the cursor and exit on signal
 	done &
 	SPINNERPID=$!
 }
@@ -395,7 +397,8 @@ stop-spinner() {
 		# If it's not zero, it means it's active, we kill it and set it back to zero
 		if [ -z "$ENDSPINNERSTRING" ]
 		then
-			printf "                                                                  \r";
+			#printf "                                                                  \r";
+			blank-line
 		else
 			echo "$ENDSPINNERSTRING"
 		fi
@@ -404,19 +407,27 @@ stop-spinner() {
 		SPINNERPID=0
 		SPINNERSTRING=""
 
-		sleep 1 # Give a little time for the above
+		sleep 2 # Give a little time for the above
 	fi
 }
 
+wait-for-any-key() {    
+	echo -n "$* "
+	read -n1 -s _
+	echo
+}
+
 wait-for-stable-operators() {
-	WAITTIME=30
-	if [ -n "$1" ]
-	then
-		WAITTIME=$1
-	fi
-	start-spinner "Waiting for all operators to become stable for $WAITTIME seconds"
-	$OCCOMMAND adm wait-for-stable-cluster --minimum-stable-period=${WAITTIME}s > /dev/null
+
+	TIMEOUT=$1
+	
+	echo
+	start-spinner "Waiting up to $TIMEOUT minutes for all operators to become stable (start time $(date +%H:%M))"
+	$OCCOMMAND adm wait-for-stable-cluster --minimum-stable-period=10s --timeout=0h${TIMEOUT}m0s &> /dev/null
+	RESULT=$?
 	stop-spinner
+
+	return $RESULT
 }
 
 cleanup-and-exit() {
@@ -562,7 +573,6 @@ print-question-skip() {
 blank-line() {
 	
 	# This little trick let's you overwrite a line with the next echo
-
 	echo -ne "\r\e[0K"
 }
 
@@ -1675,6 +1685,7 @@ check-cluster-state() {
 	echo -n " Please wait - checking OCP cluster API server availability..."
 	check-api-server 
 	RESULTAPISERVER=$?
+
 	blank-line
 	check-oc-credentials getstate
 	if [ $RESULTAPISERVER -eq 0 -a $? -eq 0 ]
@@ -1940,7 +1951,6 @@ build-ocp-node() {
 CLUSTERFQDN=$CLUSTERFQDN
 BASENETWORK=$BASENETWORK" \
 			--print-xml > ${OCPVMDISKDIR}/${NODEVMNAME}.xml
-echo  ${OCPVMDISKDIR}
 		BUILDOCPNODERESULT=$?
 		check-for-error-and-print $BUILDOCPNODERESULT "Could not build XML definition of host ${NODEVMNAME}"
 		[ $BUILDOCPNODERESULT -ne 0 ] && return $BUILDOCPNODERESULT
@@ -2365,39 +2375,29 @@ restart-virtual-network() {
 
 check-api-server() {
 
-
 	# $1 can be 'exit' so that we exit immediately if no api server appears present
 	
 	# the api server can fail in two ways:
 	# the URL is not responding (code > 0)
 	# the URL responds and has string "healthz check failed" or "status": "Failure"
 
+	# CURL will return 0 if it was able to download the URL, BUT that's not the outcome
 	RESULTAPISTRING=$(curl -k -s "https://api.${CLUSTERFQDN}:6443/healthz" 2>/dev/null) 
-	if [ $? -ne 0 ]
+	RESULTAPICHECK=$?
+	if [ $RESULTAPICHECK -eq 0 ]
 	then
-		RESULTAPICHECK=fail
-	else
 		echo ${RESULTAPISTRING} | grep -e "failed" -e "Failure" &>/dev/null
 		if [ $? -eq 0 ]
 		then
-			RESULTAPICHECK=fail
+			RESULTAPICHECK=1
 		else 
-			RESULTAPICHECK=pass
+			RESULTAPICHECK=0
 		fi
-	fi
-
-	# Note that due to the grep for "failed", 0 is bad and 1 is good so we invert the return
-	if [ "$RESULTAPICHECK" == fail ]
+	elif [ "$1" == "exit" ]
 	then
-		if [ "$1" == "exit" ]
-		then
-			cleanup-and-exit 1 red "The OpenShift API server is not available (either partially or fully). Cannot continue."
-		else
-			return 1
-		fi
-	else
-		return 0
+			cleanup-and-exit "$RESULTAPICHECK" red "The OpenShift API server is not available (either partially or fully). Cannot continue."
 	fi
+	return $RESULTAPICHECK
 }
 	
 check-cluster-power() {
@@ -2681,8 +2681,6 @@ update-services() {
 		echo
 		print-in-colour orange "All supporting services retired/stopped. "
 		sleep 2
-
-		echo
 	fi
 
 	if [ $SERVICESMODE == "restart" ]
@@ -3355,42 +3353,17 @@ yakko-infra-operations() {
 			echo "- oc get clusterversion - to check cluster status"
 			echo "- yakko - for a general update"
 			echo
-			echo Nodes are coming up. Waiting up to 10 minutes for API and User Login services.
 	
-			TIMER=300 # This is just for the API
-			while true
-			do 
-				wget2 -O /tmp/wget.$$.startcluster https://api.${CLUSTERFQDN}:6443 &>/dev/null
-				[ $? -eq 5 -o $? -eq 0 ] && break
-				echo -n .
-				sleep 5
-				TIMER=$((TIMER-5))
-				if [ $TIMER -eq 0 ]
-				then
-					echo
-					echo "ERROR: Failed to observe API server running"
-					echo "       Cannot proceed - debug separately!"
-					cleanup-and-exit 1
-				fi
-			done
-			echo
-			echo
-			echo "API server now available - waiting for administrator login."
-			sleep 60
-	
-			if [ ${LOGINFILEHASPASSWORD} -eq 1 ] 
+			print-in-colour green "Cluster has begun boot-up"
+			wait-for-stable-operators 20 # We allow 30 minute waittime for cluster to appear fully up, all COs 
+			if [ $? -eq 0 ]
 			then
-				ADMINPASSWORD=dummypassword
-				echo -n "To allow ${YAKKONAME} to report on the cluster state, please enter the password for admin user \"${YAKKOADMIN}\": "
-				read -s ADMINPASSWORD
-				echo
-			fi
-	
-			TIMER=300 # if this takes too long it could be CSRs awaiting
-			while true
-			do 
+				echo "Cluster appears ready. Attempting login..."
 				if [ ${LOGINFILEHASPASSWORD} -eq 1 ] 
 				then
+					echo -n "To allow ${YAKKONAME} to report on the cluster state, please enter the password for admin user \"${YAKKOADMIN}\": "
+					read -s ADMINPASSWORD
+					echo
 					${OCCOMMAND} login --insecure-skip-tls-verify=true -u ${YAKKOADMIN} -p ${ADMINPASSWORD} https://api.${CLUSTERFQDN}:6443 &>/dev/null
 				else
 					source ${CLUSTERLOGINFILE} &>/dev/null
@@ -3400,31 +3373,26 @@ yakko-infra-operations() {
 				[ $? -eq 0 ] && {
 					echo
 					echo "Now logged in to OCP as $(${OCCOMMAND} whoami)"
-					break
 				}
-	
-				echo -n .
-				sleep 10
-	
-				TIMER=$((TIMER-10))
-	
-				if [ $TIMER -eq 0 ]
+			else
+				PENDINGCSRS=$(${OCCOMMAND} get csr 2>/dev/null | grep Pending | awk '{ print $1 }')
+				if [ -n "${PENDINGCSRS}" ]
 				then
-					PENDINGCSRS=$(${OCCOMMAND} get csr 2>/dev/null | grep Pending | awk '{ print $1 }')
-					if [ -n "${PENDINGCSRS}" ]
-					then
-						set $PENDINGCSRS
-						echo
-						print-in-blink "ALERT: There are [$#] Pending Certificate Signing Requests (CSRs) that need approval!"
-						echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
-						cleanup-and-exit 1
-					fi
+					set $PENDINGCSRS
 					echo
+					print-in-blink "ALERT: There are [$#] Pending Certificate Signing Requests (CSRs) that need approval!"
+					echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
+				else
 					echo "Not waiting any longer for administrative login. "
-					echo "You should attempt 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'"
-					cleanup-and-exit 1
+					echo "The cluster may still be coming up."
+					echo
+					echo "To inspect status you may want to try issuing:"
+					echo "- 'oc get co'"
+					echo "- 'oc login -u <admin>  https://api.${CLUSTERFQDN}:6443'"
+					echo "- 'yakko ops emergency' (when all else fails)"
+				fi
+				cleanup-and-exit 1
 			fi
-			done
 	
 			echo
 			print-in-colour green "Cluster API endpoint https://api.${CLUSTERFQDN}:6443 is now available."
@@ -4822,7 +4790,7 @@ yakko-ops-operations() {
 		echo
 		echo "Success: added user '$NEWUSER' and assigned self-provisioner role."
 		
-		wait-for-stable-operators 
+		wait-for-stable-operators 6
 	fi
 
 	if [ "${OPTION}" == "userdelete" ]
@@ -5193,12 +5161,10 @@ yakko-ops-operations() {
 		echo "Use at your own risk!"
 		echo
 
+		echo -n "Masters are currently "
 		${OCCOMMAND} get nodes | grep master-0 | grep worker &>/dev/null
 		if [ $? -eq 0 ] #Masters are schedulable because they read 'worker'
 		then
-			MASTERSCHEDSTATE=true
-			NEWMASTERSCHEDSTATE=true
-			echo -n "Masters are currently "
 			print-in-colour green "SCHEDULABLE"
 			echo
 			if [ $(${OCCOMMAND} get nodes | grep "node-" | grep -v NotReady | grep -c Ready) -eq 0 ] 
@@ -5208,31 +5174,23 @@ yakko-ops-operations() {
 				echo
 			fi
 			ask-user "Change masters to [NOT SCHEDULABLE]" Y noauto
-			[ $? -eq 0 ] && NEWMASTERSCHEDSTATE=false
+			[ $? -eq 0 ] && 
+				${OCCOMMAND} patch schedulers.config.openshift.io/cluster  --type merge --patch '{"spec": {"mastersSchedulable": false}}'
 		else
-			MASTERSCHEDSTATE=false
-			NEWMASTERSCHEDSTATE=false
-			echo -n "Masters are currently " 
 			print-in-colour orange "NOT SCHEDULABLE"
 			echo
 			ask-user "Change masters to [SCHEDULABLE]" Y noauto
-			[ $? -eq 0 ] && NEWMASTERSCHEDSTATE=true
+			[ $? -eq 0 ] && 
+				${OCCOMMAND} patch schedulers.config.openshift.io/cluster  --type merge --patch '{"spec": {"mastersSchedulable": true}}'
 		fi
 
-		if [ "${MASTERSCHEDSTATE}" != "${NEWMASTERSCHEDSTATE}" ]
+		# Do not add anything between the above and the below!
+		if [ $? -eq 0 ] 
 		then
-			# Little hack...
-			export KUBE_EDITOR="sed -i s+mastersSchedulable:\ ${MASTERSCHEDSTATE}+mastersSchedulable:\ ${NEWMASTERSCHEDSTATE}+"
-			${OCCOMMAND} edit schedulers.config.openshift.io cluster
-
-			if [ $? -ne 0 ] 
-			then
-				echo "This operation was not succssful"
-			else
-				echo "Master scheduling updated"
-				update-haproxy-config-file
-			fi
-			echo
+			echo "Master scheduling updated"
+			update-haproxy-config-file
+		else
+			echo "This operation was not successful"
 		fi
 	fi
 
@@ -5506,28 +5464,25 @@ yakko-ops-operations() {
 				echo "A. Approve any CSRs pending approval"
 				echo "T. Check Time (for ntp drift)"
 				echo "S. Run time Sync against ntp"
+				echo "L. Login to master-0 via SSH"
 				echo "E. Exit"
 				echo
 				echo -n "Enter Option letter: "
 				read OPTIONNUMBER
-				echo
 			else
 				OPTIONNUMBER=$OPTIONARG
 			fi
 
 			case $OPTIONNUMBER in
 
-				O)	echo Command is:
-					echo ssh -i ${OCPSSHKEY} -o  \"StrictHostKeyChecking no\" -t core@${MASTER0IP} sudo \"oc get co --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig\"
-					echo
+				O)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get co --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig" 2>/dev/null ;;
 
-				P)	echo Command is:
-					echo ssh -i ${OCPSSHKEY} -o  \"StrictHostKeyChecking no\"-t core@${MASTER0IP} sudo \"oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig \| grep Pending\"
-					echo
+				P)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig | grep Pending" 2>/dev/null ;;
 
-				A)	PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig | grep ^csr | grep Pending | cut -f1 -d' ' " 2>/dev/null)
+				A)	echo
+					PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig | grep ^csr | grep Pending | cut -f1 -d' ' " 2>/dev/null)
 					if [[ "$PENDINGCERTIFICATES" =~ "No resources found".* ]]
 					then
 						echo "There are no certificates in 'Pending' state"
@@ -5539,27 +5494,31 @@ yakko-ops-operations() {
 						done
 					fi ;;
 
-				T)	echo Command is:
-					echo ssh -i ${OCPSSHKEY} -o \"StrictHostKeyChecking no\" -t core@${MASTER0IP} sudo \"date\"
-					echo
+				T)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "date" 2>/dev/null ;;
 
-				S)	echo Command is:
-					echo ssh -i ${OCPSSHKEY} -o  \"StrictHostKeyChecking no\" -t core@${MASTER0IP} sudo \"systemctl restart chronyd\"
-					echo
+				S)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "systemctl restart chronyd" 2>/dev/null ;;
+
+				L)	echo 
+					echo "You will be logged in to master-0, type 'exit' to leave. For other nodes, use 'yakko infra sshtonode'."
+					echo
+					echo "KUBECONFIG has been set as follows: "	
+					print-in-colour orange "export KUBECONFIG=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig"
+					echo
+					ssh -t -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${MASTER0IP} "export KUBECONFIG=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig; export PS1='master-0# ';sudo -E bash";;
 
 				E)	cleanup-and-exit;;
 
 				*) echo "Invalid option.";;
 			esac
+			echo
+
 			if [ -n "$OPTIONARG" ] 
 			then
 				break
 			else
-				echo
-				echo -n "Press any key to continue..."
-				read _
+				wait-for-any-key "Press any key to continue..."
 			fi
 		done
 	fi
@@ -6826,9 +6785,7 @@ process-stage-create-ingestmanifestsandignition() {
 			print-in-colour orange "ALERT: PAUSE REQUESTED AT THIS POINT TO ALLOW MANUAL EDITING OF install-config.yaml."
 			print-in-colour orange "       File is located at:  ${CLUSTERSETUPDIR}/install-config.yaml"
 			echo
-			echo -n "<Press any key to continue from here when ready - or CTRL-C and re-issue 'yakko' later> "
-			read RESPONSE
-			echo
+			wait-for-any-key "<Press any key to continue from here when ready - or CTRL-C and re-issue 'yakko' later>"
 		fi
 		
 		ask-user "Ingest OCP cluster manifests and ignition files required for cluster bootstrap" "Y" && {
@@ -7949,7 +7906,7 @@ process-stage-gatherclusterconfiguration() {
 				check-system-core-count "- "
 				
 				ask-user "Do you want to leverage the OpenShift Agent-Based Installer?" N
-				if [ $? -ne 0 ]
+				if [ $? -eq 0 ]
 				then
 					AGENTBASEDINSTALLER=agent
 				else
@@ -7958,6 +7915,7 @@ process-stage-gatherclusterconfiguration() {
 			else
 				print-question-skip "OPENSHIFT AGENT BASED INSTALLER (skip) - not building to latest version"
 			fi
+
 
 			### QUESTION: Get repository for VMs ## Stored in BUILD DEFAULTS
 			print-question-separator VM STORAGE
@@ -8511,10 +8469,14 @@ fi
 
 if [ "$1" == "runcommand" ]
 then
+	source $CLUSTERCONFIGFILE
 	# This is to test functions in yakko from outside. The world doesn't need to know.
 	shift
+	echo "Calling $*"
 	eval $*
-	cleanup-and-exit 0 
+	RESULT=$?
+	echo Output was [$RESULT]
+	cleanup-and-exit $RESULT 
 fi
 	
 print-yakko-header
@@ -8976,10 +8938,9 @@ else
 			echo                "       This message will not be repeated for this version"
 			echo
 			echo "VISIT: https://github.com/ozchamo/YAKKO"
-			echo
 			echo 
-			print-in-colour ${YAKKOTEXTCOLOUR}  "<Press any key to continue>"
-			read -p ""
+			wait-for-any-key '<Press any key to continue>'
+			echo
 			NOTICEYAKKOVERSION="\"${NOTICEYAKKOVERSION} ${YAKKOVERSION}\""
 			sed -i "s/NOTICEYAKKOVERSION=.*/NOTICEYAKKOVERSION=${NOTICEYAKKOVERSION}/" ${CLUSTERCONFIGFILE}
 			echo
