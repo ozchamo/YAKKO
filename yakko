@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=8.01
-YAKKODATE=20240712.1752
+YAKKOVERSION=8.02
+YAKKODATE=20240727.0033
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -340,22 +340,22 @@ check-for-other-yakko-cluster-files() {
 	# this is in particular useful when starting a cluster after a crash
 	# or when building a new cluster after a crash
 	
-	if [ $(find /etc -name 'yakko*' | grep -cv ${YAKKOID}) -gt 0 ]
+	if [ $(find /etc -name 'yakko*' | wc -l) -gt 0 ]
 	then
-		echo "There are currently other YAKKO cluster files in the system, which can cause"
-		echo "conflicts for services to come up properly. However, ${YAKKONAME} does not depend"
-		echo "on these to start-up properly and can be removed safely."
-		echo 
-		echo "As there are no clusters currently active, ${YAKKONAME} can proceed "
-		echo "to delete the following file(s):"
+		print-in-colour orange "NOTE: There is no active cluster but there are YAKKO files in the system"
+		echo "This can cause conflicts for services to come up properly."
+		echo "There is no dependency on the following files to cleanly"
+		echo "start up the cluster and can therefore be removed safely:"
 		echo
-		find /etc -name 'yakko*'
+		find /etc -name 'yakko*' | sed -e "s/^/- /"
 		echo
+
 		ask-user "Delete these files and continue" Y noauto
-		
 		if [ $? -eq 0 ]
 		then
-			find /etc -name 'yakko*' -exec rm {} \;
+			remove-stubfiles 
+       		stop-virtual-network undefine
+			echo
 		else
 			cleanup-and-exit 1 orange "Please check manually and return when ready"
 		fi
@@ -370,6 +370,7 @@ start-spinner() {
 	# $1 - Pass some text if you want to explain what's going on.
 	# SPINNERPID is global 
 
+	[ "$RUNCOMMANDDEBUG" == "Y" ] && return
 	SPINNERSTRING=$1
 
 	local -a cursor=( '/' '-' '\' '|' );    
@@ -390,6 +391,7 @@ start-spinner() {
 stop-spinner() {
 	# Call this to stop the spinner. No params required thanks to global SPINNERPID
 
+	[ "$RUNCOMMANDDEBUG" == "Y" ] && return 
 	local ENDSPINNERSTRING=$1
 
 	if [ $SPINNERPID -ne 0 ]
@@ -1362,7 +1364,7 @@ check-if-openshift-version-is-valid() {
 	OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/$OCPVERSION"
 
 	start-spinner "Checking if OCP version $OCPVERSION is valid"
-	wget2 -O $OCPWGETTMP -q --method=HEAD $OCPDOWNLOADCLIENT 
+	wget2 -O $OCPWGETTMP -q --method=HEAD "$OCPDOWNLOADCLIENT/" # all of sudden a traling / is required?
 	RESULT=$?
 	stop-spinner
 
@@ -1396,11 +1398,15 @@ get-openshift-latest() {
 	OCPDOWNLOADIMAGES="$OCPROOT/dependencies/rhcos/latest" # OCP 4.15 change to layout
 
 	start-spinner "Checking for latest OpenShift version"
-	wget2 -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
+	wget2 -T 5 --tries=5 -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
 	check-for-error-and-exit $? "Failed to download version file for latest OCP - check if https://mirror.openshift.com is reachable" 
 	stop-spinner
 
-	OCPVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
+	OCPVERSION=$(cat $OCPWGETTMP 2>/dev/null | grep Version: | awk '{ print $2 }')
+	if ! [[ "$(echo $OCPVERSION | cut -f1 -d.)" =~ $NUMBERRE ]]
+	then	
+		cleanup-and-exit 1 red "ERROR: Failed to verify OpenShift latest version from mirror.openshift.com"
+	fi
 	OCPINSTALLMINORVERSION=$(echo $OCPVERSION | cut -f2 -d.)
 }
 
@@ -2336,13 +2342,17 @@ start-virtual-network() {
 
 stop-virtual-network() {
 
-	# stop and possibly undefine virtual network
-	virsh net-destroy ${NETWORKNAME} &>/dev/null
+	# stop and possibly undefine virtual network (any and all! V8.01)
+	
+	for EACHVIRTUALNETWORK in $(virsh net-list --all --name  | grep yakko)
+	do
+		virsh net-destroy ${EACHVIRTUALNETWORK} &>/dev/null
 
-	if [ "$1" == "undefine" ]
-	then
-		virsh net-undefine ${NETWORKNAME} &>/dev/null
-	fi
+		if [ "$1" == "undefine" ]
+		then
+			virsh net-undefine ${EACHVIRTUALNETWORK} &>/dev/null
+		fi
+	done
 }
 
 restart-virtual-network() {
@@ -2421,7 +2431,7 @@ check-cluster-power() {
 		if [ "$DOEXIT" == "exit" ]
 		then
 			get-cluster-configuration print
-			cleanup-and-exit 1 orange " This cluster is currently SUSPENDED. Run 'yakko startcluster'"
+			cleanup-and-exit 1 orange " This cluster is currently SUSPENDED: run 'yakko startcluster'"
 		fi
 
 		return 5 #  The masters are suspended (note that this is not granular enough, but c'mon)
@@ -2432,7 +2442,7 @@ check-cluster-power() {
 		if [ "$DOEXIT" == "exit" ]
 		then
 			get-cluster-configuration print
-			cleanup-and-exit 1 orange " This cluster is currently SHUTDOWN. Run 'yakko startcluster'"
+			cleanup-and-exit 1 orange " This cluster is currently SHUTDOWN: run 'yakko startcluster'"
 		fi
 
 		return 4 # Special case - the cluster is SHUTDOWN!
@@ -2571,6 +2581,7 @@ restore-stubfiles() {
 remove-stubfiles() {
 
 	# This routine deletes all current stub files
+	# Additionally, a virtual network config file could linger at /etc/libvirt/qemu/networks 
 
 	rm /etc/NetworkManager/dnsmasq.d/yakko-* &>/dev/null
 	rm /etc/NetworkManager/conf.d/yakko-* &>/dev/null
@@ -3289,8 +3300,10 @@ yakko-infra-operations() {
 
 		print-option-header infra "Start cluster [${CLUSTERFQDN}]"
 
+		check-for-other-yakko-cluster-files
 		check-cluster-power
 		CLUSTERSTATE=$?
+
 		if [ $CLUSTERSTATE -eq 0 ]
 		then
 			echo "Cluster [${CLUSTERFQDN}] is already running."
@@ -3354,7 +3367,7 @@ yakko-infra-operations() {
 			echo "- yakko - for a general update"
 			echo
 	
-			print-in-colour green "Cluster has begun boot-up"
+			print-in-colour green "Cluster has begun boot-up $(date +%H:%M%p)"
 			wait-for-stable-operators 20 # We allow 30 minute waittime for cluster to appear fully up, all COs 
 			if [ $? -eq 0 ]
 			then
@@ -5648,10 +5661,10 @@ process-stage-libvirt() {
 		# The thing is, if there is no KVM, there is no hope!
 
 		cat /proc/cpuinfo | grep -E "vmx|svm" &>/dev/null
-		check-for-error-and-exit $? "Virtualisation extensions are not enabled in this system!"			
-		#VIRTUALISATION IS MANDATORY THE FIRST TIME WE RUN THIS
-		#NO systemctl enable libvirtd --now &>/dev/null
-		#NO systemctl status libvirtd --no-pager &>/dev/null
+		check-for-error-and-exit $? "Virtualisation extensions (vmx|smv) are not enabled in this system!"			
+		cat /proc/cpuinfo | grep flags | grep nx &>/dev/null
+		check-for-error-and-exit $? "NX - No eXecute is disabled in this system!"			
+		
 		systemctl enable virtqemud --now &>/dev/null
 		systemctl status virtqemud --no-pager &>/dev/null
 		check-for-error-and-exit $? "Failed to enable [virtqemud]" 
@@ -6395,11 +6408,12 @@ process-stage-httpserver() {
 					semanage port -l | grep $SYSTEMCANDIDATEPORT &>/dev/null
 					if [ $? -ne 0 ]
 					then
-						# and CANDIDATEPORT is not marked iun selinux
+						# and CANDIDATEPORT is not marked in selinux
 						break
 					fi
 				fi
 			done
+			# at this point we have in SYSTEMCANDIDATE an unused, un-selinuxed port
 
 			while true 
 			do
@@ -6416,14 +6430,13 @@ process-stage-httpserver() {
 						if [ $? -eq 0 ]
 						then
 							PORTAVAILABLE=Y
+							PORTSELINUXENABLED=Y
 						else
 							semanage port -l | grep ${CANDIDATEPORT} &>/dev/null
 							if [ $? -ne 0 ]
 							then
 								# Port is NOT registered elsewhere - good, we take it and register it here with SELinux
 								PORTAVAILABLE=Y
-								semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT} 2>/dev/null
-								check-for-error-and-exit $? "Could not assign SELinux permissions to port ${CANDIDATEPORT}.\n(Calling 'semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT}')"
 								break
 							fi
 						fi
@@ -6432,7 +6445,6 @@ process-stage-httpserver() {
 
 				if [ $PORTAVAILABLE == "N" ]
 				then
-					echo
 					echo "ERROR: Port ${CANDIDATEPORT} is not available for serving RHCOS images."
 					echo "       If this is not something you can change, enter an alternative port"
 					echo "       now, or press <CTRL-C> to address."
@@ -6460,6 +6472,7 @@ process-stage-httpserver() {
 			done 
 
 			echo "Using port [${WEBSERVERPORT}] for RHCOS image delivery"
+
 			WEBSERVERURL=http://${CLUSTERPROXY}:${WEBSERVERPORT}
 			echo "WEBSERVERPORT=${WEBSERVERPORT}" >> ${CLUSTERBUILDDEFAULTS}
 			echo "WEBSERVERURL=http://${CLUSTERPROXY}:${WEBSERVERPORT}" >> ${CLUSTERBUILDDEFAULTS}
@@ -6490,10 +6503,17 @@ process-stage-httpserver() {
 		
 			if [ ${SELINUXSTATE} -eq 0 ]
 			then
-				# Figure out which of these SELinux values are required
-				# and needed to survive a reboot...
+				# Figure out which of these SELinux values are required and needed to survive a reboot...
+				#
+				if [ "${PORTSELINUXENABLED}" != "Y" ]
+				then
+					# semanage doesn't like being told twice on a port
+					echo "Setting SELinux permissions on port ${WEBSERVERPORT}"
+					semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT} 2>/dev/null
+					check-for-error-and-exit $? "Could not assign SELinux permissions to port ${WEBSERVERPORT}.\n(Calling 'semanage port -a -t http_port_t -p tcp ${WEBSERVERPORT}')"
+				fi
 
-				chcon  --user system_u --type httpd_sys_content_t -Rv $IMAGEREPO
+				chcon --user system_u --type httpd_sys_content_t -Rv $IMAGEREPO
 				check-for-error-and-exit $? "Failed to change security context (chcon) for $IMAGEREPO (filesystem type is $(stat -f -c %T $IMAGEREPO))"
 				semanage fcontext -a -t httpd_sys_content_t "$IMAGEREPO(/.*)?"
 				if [ $? -ne 0 ]
@@ -7363,21 +7383,22 @@ process-stage-gatherclusterconfiguration() {
 		# Some of these are more "global" in nature so we store them in ${CLUSTERBUILDDEFAULTS}
 		# (which was separate functionality in earlier versions)
 
-		#startbuildclusterfromtemplate
+		check-for-other-yakko-cluster-files
+
 		if [ "${YAKKOBUILDTEMPLATETYPE}" -ne 0 ]
 		then
 			### TEMPLATE # startbuildclusterfromtemplate
-
-			check-for-other-yakko-cluster-files
 
 			# This can only be called with 'yakko rebuildcluster' with no cluster configured
 			# And for this to happen we get here with YAKKOBUILDTEMPLATETYPE == 1
 			# or YAKKOBUILDTEMPLATETYPE == 2 in which case you are passing a "template"
 
+			MASTERRAMSIZE=0 # This because we need to give the template a chance to populate it and then later we check
+
 			if [ "${YAKKOBUILDTEMPLATETYPE}" -eq 1 ]
 			then
 				# YAKKOTEMPLATE was already set LASTBUIDLCONFIG when 'rebuildcluster' parameter was detected
-				print-in-colour white "REBUILD requested, ${YAKKONAME} will attempt repeating the last known successful cluster configuration:"
+				print-in-colour white "REBUILD requested, ${YAKKONAME} will attempt repeating the last known successful cluster configuration"
 				source ${YAKKOTEMPLATE} 
 			fi
 
@@ -7406,11 +7427,12 @@ process-stage-gatherclusterconfiguration() {
 					else
 						if [[ "$YAKKOTEMPLATE" =~ $NUMBERRE ]]
 						then
-							echo "NOTE:Template is a number. Did you mean to use 'yakko buildclusterfromdefaults'"
+							echo "NOTE: Template is a number. Did you mean to use 'yakko buildclusterfromdefaults'"
 						fi
 						cleanup-and-exit 1 orange "ERROR: Could not open template file [${YAKKOTEMPLATE}]"
 					fi
 				fi
+
 				source ${YAKKOTEMPLATE} 
 			fi
 
@@ -7419,8 +7441,6 @@ process-stage-gatherclusterconfiguration() {
 				print-in-colour white "BUILD FROM DEFAULTS requested. Configuration will be automatic."
 			fi
 			echo
-
-			MASTERRAMSIZE=0 # This because we need to give the template a chance to populate it and then later we check
 
 			# VALIDATE TEMPLATE BEGIN: We check that all needed values are present
 
@@ -8286,15 +8306,19 @@ process-stage-postinstall() {
 			
 			if [ "${CLUSTERPOSTINSTALL:0:4}" == "http" ]
 			then
-				print-in-colour white "Beginning Cluster post-install tasks at URL"
+				print-in-colour white "Runnin Cluster post-install tasks at URL"
 				print-in-colour white "${CLUSTERPOSTINSTALL}" 
-				echo
-
 				wget2 -O $OCPWGETTMP ${CLUSTERPOSTINSTALL} 
 				if [ $? -eq 0 ]
 				then
 					chmod +x $OCPWGETTMP
 					$OCPWGETTMP # Yep, we run it - bash to prevent permission issues
+					echo
+					print-in-colour ${YAKKOTEXTCOLOUR} "FINISHED POST-INSTALL TASKS - $(date)"
+					print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
+					echo
+					ask-user "Do you want to see the current cluster state report" Y noauto
+					[ $? -eq 0 ] && check-cluster-state
 				else
 					print-in-colour orange "ERROR: Could not download cluster-post-install file ${CLUSTERPOSTINSTALL}"
 					print-in-colour orange "       No post installation process performed"
@@ -8304,6 +8328,12 @@ process-stage-postinstall() {
 				then	
 					print-in-colour white  "Running cluster post-install tasks at file ${CLUSTERPOSTINSTALL}" 
 					bash ${CLUSTERPOSTINSTALL} # Yep, we run it - bash to prevent permission issues
+					echo
+					print-in-colour ${YAKKOTEXTCOLOUR} "FINISHED POST-INSTALL TASKS - $(date)"
+					print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
+					echo
+					ask-user "Do you want to see the current cluster state report" Y noauto
+					[ $? -eq 0 ] && check-cluster-state
 				else	
 					echo "Post-installation file [${CLUSTERPOSTINSTALL}] not available for processing"
 				fi
@@ -8313,14 +8343,6 @@ process-stage-postinstall() {
 		fi
 
 		echo
-		print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
-		print-in-colour ${YAKKOTEXTCOLOUR} "FINISHED POST-INSTALL TASKS - $(date)"
-		print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
-
-		echo
-		ask-user "Do you want to see the current cluster state report" Y noauto
-		[ $? -eq 0 ] && check-cluster-state
-			
 	}
 
 	[ $1 == "rollback" ] && {
@@ -8469,8 +8491,13 @@ fi
 
 if [ "$1" == "runcommand" ]
 then
-	source $CLUSTERCONFIGFILE
 	# This is to test functions in yakko from outside. The world doesn't need to know.
+	
+	ask-user "Run in full DEBUG: 'set -x' + no spinner" Y
+	[ $? -eq 0 ] && { set -x; RUNCOMMANDDEBUG=Y; }
+
+	source $CLUSTERCONFIGFILE
+
 	shift
 	echo "Calling $*"
 	eval $*
@@ -8852,7 +8879,15 @@ then
 			if [[ "$1" =~ $NUMBERRE ]] && [[ "$2" =~ $NUMBERRE ]]
 			then 
 				MASTERNODECOUNT=$1
+				if [[ ! ( $MASTERNODECOUNT -eq 1 || $MASTERNODECOUNT -eq 3 ) ]]
+				then
+					cleanup-and-exit 1 orange "ERROR: 'buildclusterfromdefaults': master node count must be 1 or 3"
+				fi
 				WORKERNODECOUNT=$2
+				if [ $WORKERNODECOUNT -lt 0 -o $WORKERNODECOUNT -gt 5 ]
+				then
+					cleanup-and-exit 1 orange "ERROR: 'buildclusterfromdefaults': worker node count must be between 0 and 5"
+				fi
 
 				CLUSTERNAME="$(hostname 2>/dev/null)"
 				if [ -z "$CLUSTERNAME" ]
