@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=8.02
-YAKKODATE=20240727.0033
+YAKKOVERSION=8.03
+YAKKODATE=20241001.0017
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -41,13 +41,15 @@ THREEMASTERRAMSIZE=16000   # See recommendation links above
 DEFAULTWORKERRAMSIZE=8000  # Recommended 8GB
 WORKERRAMSIZE=8000         # Recommended 8GB
 MINWORKERRAMSIZE=8000      # This boundary has been changing as OCP revs up!
-BOOTSTRAPNODERAMSIZE=10000 # See recommendation links above - RAM size of the bootstrap has changed over time...
+BOOTSTRAPNODERAMSIZE=16000 # See recommendation links above - RAM size of the bootstrap has changed over time...
+MAXMEMBALLONSIZE=2000      # We provide a little room for growth. No one wants to swap!
 
 # CPU Sizing
 MASTERNODECOUNT=3          # Default clusters by YAKKO are built as 3x0
 MASTERVCPUS=4              # Recommended 4, though with SNO/single master it is better to have 8
 WORKERVCPUS=2              # Recommended 2
-RECOMMENDEDCORECOUNT=8     # This is for the host to work well. Less than this? try harder when installing.
+RECOMMENDEDCORECOUNT=8     # This is for the YAKKO host to work well. Less than this? try harder when installing.
+BOOTSTRAPNODEVCPUS=4        # See recommendation links above - CPU count of the bootstrap has changed over time...
 
 # Disk Sizing
 MASTERDISKSIZE=120         # Disk image size for master, GB  # OCP 4.15 needs 120GB for Agent Based Install
@@ -90,8 +92,17 @@ OCPSETUPENV=ocp-setup-env                # Default commands to setup your KUEBCO
 YAKKONAME=YAKKO        # In case we want to change the name?
 YAKKOSCRIPTNAME=yakko  # In case we want to change the script name??
 
+# HOST DETAILS
+YAKKOHOSTOSNAME=$(cat /etc/os-release | grep '^ID=' | cut -f2 -d= | tr -d "\"")
+YAKKOHOSTOSRELEASE=$(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d= | tr -d "\"")
+YAKKOHOSTPLATFORM="$YAKKOHOSTOSNAME $YAKKOHOSTOSRELEASE"
+
+# WGET setup (one day - curl!)
+[ ${YAKKOHOSTOSNAME} == "rhel" ] && WGET="wget" 
+[ ${YAKKOHOSTOSNAME} == "fedora" ] && WGET="wget2" 
+
 # Cluster build progression variables - DO NOT CHANGE
-REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy wget2 lsof httpd firewalld bind-utils"
+REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy lsof httpd firewalld bind-utils net-tools ${WGET}"
 YAKKOSTAGE=0
 STAGEPROGRESS=0
 YAKKOBUILDTEMPLATETYPE=0  # 0 means "ask questions, don't use a template file"
@@ -114,9 +125,6 @@ HTPASSWDFILE=/tmp/ocp-htpasswd.$$
 DHCPXMLTMPFILE=/tmp/yakkodhcpxmlline.$$.tmp
 OCPWGETTMP=/tmp/ocpsetupwget.$$.tmp
 YAKKOTALLY=/.yakkobuildtally
-
-# And some facts...
-SYSTEMPHYSICALRAM=$(free -m | grep Mem:|awk '{ print $2 }')
 
 # Default Download links
 # Get the OCP installer specifically for x86_64. One day this may be useful for IBM ... Power ;)
@@ -303,6 +311,21 @@ generate-login-command-file() {
 	chmod 700 ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
 }
 
+change-console-logo() {
+	rm /tmp/yakko-custom-logo.png &>/dev/null
+	${WGET} -O /tmp/yakko-custom-logo.png  https://raw.githubusercontent.com/ozchamo/YAKKO/master/openshift-yakko-logo.png &>/dev/null
+	if [ $? -eq 0 ]
+	then
+		echo "Updating OpenShift Console logo!"
+		${OCCOMMAND} delete configmap yakko-custom-logo -n openshift-config 
+		${OCCOMMAND} create configmap yakko-custom-logo --from-file /tmp/yakko-custom-logo.png -n openshift-config
+		${OCCOMMAND} patch consoles.operator.openshift.io/cluster --type=merge -p '{"spec":{"customization":{"customLogoFile":{"name":"yakko-custom-logo"}}}}'
+		${OCCOMMAND} patch consoles.operator.openshift.io/cluster --type=merge -p '{"spec":{"customization":{"customLogoFile":{"key":"yakko-custom-logo.png"}}}}'
+		rm /tmp/yakko-custom-logo.png &>/dev/null
+	else
+		echo "Could not update OpenShift Console logo - failed to download from github."
+	fi
+}
 
 mark-cluster-complete() {
 	
@@ -765,12 +788,6 @@ test-libvirt-monolithic-service-status() {
 	return $RESULTTSS1
 }
 
-load-system-release-info() {
-	THISOSNAME=$(cat /etc/os-release | grep '^ID=' | cut -f2 -d= | tr -d "\"")
-	THISOSRELEASE=$(cat /etc/os-release | grep '^VERSION_ID=' | cut -f2 -d= | tr -d "\"")
-	THISPLATFORM="$THISOSNAME $THISOSRELEASE"
-}
-
 install-libvirt-modular-services() {
 
 	# Starting with YAKKO 8.0, it's all about libvirt MODULAR daemons
@@ -783,10 +800,9 @@ install-libvirt-modular-services() {
 	# MODULAR DAEMONS: virtqemud
 	# MODULAR DAEMONS SECONDARY: virtinterfaced virtnetworkd virtnodedevd virtnwfilterd virtsecretd virtstoraged
 	#
-	load-system-release-info
-	if [ "$THISOSNAME" == "fedora" ]
+	if [ "$YAKKOHOSTOSNAME" == "fedora" ]
 	then
-		if [ "$THISOSRELEASE" -lt 36  ]
+		if [ "$YAKKOHOSTOSRELEASE" -lt 36  ]
 		then
 			echo "As this system is earlier than Fedora 36, you should use an older version of YAKKO."
 			echo "Going forward YAKKO only uses modular libvirt daemons, which were released post Fedora 35."
@@ -794,7 +810,7 @@ install-libvirt-modular-services() {
 			cleanup-and-exit 1
 		fi
 	fi
-	if [ "$THISOSNAME" == "rhel" -a "$(echo $THISOSRELEASE | tr -d .)" -lt 90  ]
+	if [ "$YAKKOHOSTOSNAME" == "rhel" -a "$(echo $YAKKOHOSTOSRELEASE | tr -d .)" -lt 90  ]
 	then
 		echo "As this system is earlier than RHEL 9, it will remain under monolithic daemons."
 		echo "Going forward YAKKO only uses modular libvirt daemons, which were released post Fedora 35."
@@ -1364,7 +1380,7 @@ check-if-openshift-version-is-valid() {
 	OCPDOWNLOADCLIENT="$OCPROOT/clients/ocp/$OCPVERSION"
 
 	start-spinner "Checking if OCP version $OCPVERSION is valid"
-	wget2 -O $OCPWGETTMP -q --method=HEAD "$OCPDOWNLOADCLIENT/" # all of sudden a traling / is required?
+	${WGET} -O $OCPWGETTMP -q --method=HEAD "$OCPDOWNLOADCLIENT/" # all of sudden a traling / is required?
 	RESULT=$?
 	stop-spinner
 
@@ -1398,7 +1414,7 @@ get-openshift-latest() {
 	OCPDOWNLOADIMAGES="$OCPROOT/dependencies/rhcos/latest" # OCP 4.15 change to layout
 
 	start-spinner "Checking for latest OpenShift version"
-	wget2 -T 5 --tries=5 -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
+	${WGET} -T 5 --tries=5 -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
 	check-for-error-and-exit $? "Failed to download version file for latest OCP - check if https://mirror.openshift.com is reachable" 
 	stop-spinner
 
@@ -1429,7 +1445,7 @@ get-rhcos-dependency() {
 		echo -n " $IMAGESVERSIONMICRO"
 		RHCOSVERSION=$VERSIONMAJOR.$VERSIONMINOR.$IMAGESVERSIONMICRO
 		OCPDOWNLOADIMAGES="$OCPROOT/dependencies/rhcos/$VERSIONMAJOR.$VERSIONMINOR/$RHCOSVERSION"
-		wget2 -O $OCPWGETTMP $OCPDOWNLOADIMAGES/sha256sum.txt &>/dev/null
+		${WGET} -O $OCPWGETTMP $OCPDOWNLOADIMAGES/sha256sum.txt &>/dev/null
 		if [ $? -eq 0 ]
 		then
 			# We found the right accompanying RHCOS version to OCPVERSION
@@ -1666,7 +1682,7 @@ check-cluster-state() {
 
 	# If the web console is available, offer info for it regardless of the output above
 	echo -n " Please wait - checking OCP cluster console availability..."
-	wget2 -O $OCPWGETTMP ${CLUSTERWEBURL} --no-check-certificate -4 &>/dev/null
+	${WGET} -O $OCPWGETTMP ${CLUSTERWEBURL} --no-check-certificate -4 &>/dev/null
 	RESULTCONSOLE=$?
 	blank-line
 
@@ -1927,7 +1943,7 @@ build-ocp-node() {
 		#openshift install ignition: no config provided by user
 		#virt-install \
 		#	--name ${NODEVMNAME} \
-		#	--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+		#	--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
 		#	--vcpus ${NODEVCPUS} \
 		#	--cpu host,+vmx \
 		#	--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -1944,7 +1960,7 @@ build-ocp-node() {
 		#--cdrom ${IMAGEREPO}/${OCPINSTALLVERSION}/agent.x86_64.iso \
 		virt-install \
 			--name ${NODEVMNAME} \
-			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host,+vmx \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -1984,7 +2000,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host,+vmx \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -2001,7 +2017,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 3 ]
 	then
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -2017,7 +2033,7 @@ BASENETWORK=$BASENETWORK" \
 		BUILDOCPNODERESULT=$?
 	else
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${SYSTEMPHYSICALRAM} \
+			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
 			--vcpus ${NODEVCPUS} \
 			--cpu host \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -3248,6 +3264,23 @@ snap-active-cluster() {
 }
 
 
+time-sync-all-nodes() {
+	echo 
+	print-in-colour lightblue "Restoring time sync for all nodes:"
+	echo
+	for DOMAIN in $(virsh list --all --name | grep ${YAKKOID})
+	do
+		get-node-ip-address $DOMAIN
+
+		start-spinner "Syncing $(get-node-fqdn $DOMAIN)"
+		# sadly, chronyc -a makestep did not seem to work 
+		ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${NODEIPADDRESS} sudo "systemctl restart chronyd" 2>/dev/null
+		stop-spinner "$(get-node-fqdn $DOMAIN) should now be time accurate"
+	done
+	echo
+}
+
+
 ##########################################################################################################
 ### YAKKO INFRA 
 ##########################################################################################################
@@ -3347,7 +3380,7 @@ yakko-infra-operations() {
 	
 			for NODENAME in ${NODELIST}
 			do
-				virsh setmaxmem ${NODENAME} ${SYSTEMPHYSICALRAM}M &>/dev/null
+				virsh setmaxmem ${NODENAME} ${MAXMEMBALLONSIZE}M &>/dev/null
 				echo "Starting up: ${NODENAME}"
 				NODESTATE=$(virsh dominfo ${NODENAME} | grep State: | awk '{print $2}')
 				if [ ${NODESTATE} == paused ]
@@ -3626,19 +3659,7 @@ yakko-infra-operations() {
 					ask-user "Do you want to NTP time sync the nodes" Y
 					if [ $? -eq 0 ]
 					then
-						echo 
-						print-in-colour lightblue "Restoring time sync for all nodes:"
-						echo
-						for DOMAIN in $(virsh list --all --name | grep ${YAKKOID})
-						do
-							get-node-ip-address $DOMAIN
-
-							start-spinner "Syncing $(get-node-fqdn $DOMAIN)"
-							# sadly, chronyc -a makestep did not seem to work 
-							ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${NODEIPADDRESS} sudo "systemctl restart chronyd" 2>/dev/null
-							stop-spinner "$(get-node-fqdn $DOMAIN) should now be time accurate"
-						done
-						echo
+						time-sync-all-nodes
 					fi
 				fi
 			fi
@@ -4339,7 +4360,6 @@ yakko-infra-operations() {
 		purge-downloads
 	fi 
 
-
 	if [ "${OPTION}" == "describehw" ]
 	then
 		#infradescribehw
@@ -4348,6 +4368,19 @@ yakko-infra-operations() {
 
 		print-in-colour green  "Computer info:"
 		lshw | sed -n "2,4p" | sed -e "s/^ \+//g"
+		MANUFACTURER="uknown"
+		cat /proc/cpuinfo | grep vendor_id | uniq | awk '{ print $3 }' | tr 'A-Z' 'a-z' | grep "intel" &>/dev/null
+		[ $? -eq 0 ] && MANUFACTURER=intel
+		cat /proc/cpuinfo | grep vendor_id | uniq | awk '{ print $3 }' | tr 'A-Z' 'a-z' | grep "amd" &>/dev/null
+		[ $? -eq 0 ] && MANUFACTURER=amd
+		
+		if [ $MANUFACTURER == "unknown" ]
+		then
+			print-in-colour red "CPU MANUFACTURER IS UNKNOWN"
+		else
+			print-in-colour white "CPU CLASS: $MANUFACTURER"
+		fi
+
 		echo
 
 		print-in-colour green  "CPU info:"
@@ -4359,17 +4392,16 @@ yakko-infra-operations() {
 		echo
 
 		print-in-colour green  "CPU passthrough info:"
-		if [ $(cat /sys/module/kvm_intel/parameters/nested) == Y ]
+		NESTEDVIRTSTATE="$(cat /sys/module/kvm_$MANUFACTURER/parameters/nested)"
+		if [ "$NESTEDVIRTSTATE" == Y -o "$NESTEDVIRTSTATE" == "1" ]
 		then
 			echo "Nested Virtualization is ENABLED"
 		else
 			echo "Nested Virtualization is DISABLED"
 			echo "See https://docs.fedoraproject.org/en-US/quick-docs/using-nested-virtualization-in-kvm/"
 		fi
-
 	fi
 	
-
 	if [ ${OPTION} == "nfsshare" ]
 	then
 		#infranfsshare
@@ -4751,7 +4783,6 @@ yakko-ops-operations() {
 		sed -i "s/kubeadmin/${YAKKOADMIN}/" ${IMAGEREPO}/index.html
 		sed -i "/Password:/d" ${IMAGEREPO}/index.html
 		compose-html-cluster-report noadmin
-				
 	fi
 
 	if [ ${OPTION} == "useradd" ]
@@ -5488,13 +5519,13 @@ yakko-ops-operations() {
 
 			case $OPTIONNUMBER in
 
-				O)	echo 
+				o|O)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get co --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig" 2>/dev/null ;;
 
-				P)	echo 
+				p|P)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig | grep Pending" 2>/dev/null ;;
 
-				A)	echo
+				a|A)	echo
 					PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig | grep ^csr | grep Pending | cut -f1 -d' ' " 2>/dev/null)
 					if [[ "$PENDINGCERTIFICATES" =~ "No resources found".* ]]
 					then
@@ -5507,13 +5538,13 @@ yakko-ops-operations() {
 						done
 					fi ;;
 
-				T)	echo 
+				t|T)	echo 
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "date" 2>/dev/null ;;
 
-				S)	echo 
-					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "systemctl restart chronyd" 2>/dev/null ;;
+				s|S)	echo 
+						time-sync-all-nodes;;
 
-				L)	echo 
+				l|L)	echo 
 					echo "You will be logged in to master-0, type 'exit' to leave. For other nodes, use 'yakko infra sshtonode'."
 					echo
 					echo "KUBECONFIG has been set as follows: "	
@@ -5521,7 +5552,7 @@ yakko-ops-operations() {
 					echo
 					ssh -t -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" core@${MASTER0IP} "export KUBECONFIG=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig; export PS1='master-0# ';sudo -E bash";;
 
-				E)	cleanup-and-exit;;
+				e|E)	cleanup-and-exit;;
 
 				*) echo "Invalid option.";;
 			esac
@@ -6289,23 +6320,23 @@ process-stage-downloadocpbinaries() {
 					echo
 					echo "Downloading the OCP installer -> $PWD"
 					# DOWNLOAD CLIENT STUFF FIRST (as of 4.6 it is common to all versions)
-					wget2 $OCPDOWNLOADCLIENT/openshift-install-linux.tar.gz 
+					${WGET} $OCPDOWNLOADCLIENT/openshift-install-linux.tar.gz 
 					tar xzf openshift-install-linux.tar.gz
 					[ $? -ne 0 ] && { echo "Error downloading *openshift-installer*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 	
 					echo
 					echo "Downloading the OCP client -> $PWD"
-					wget2 $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz 
+					${WGET} $OCPDOWNLOADCLIENT/openshift-client-linux.tar.gz 
 					tar xzf openshift-client-linux.tar.gz
 					[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 				else
 					echo "Downloading the OCP installer -> $PWD"
-					wget2 $OCPDOWNLOADCLIENT/openshift-install-linux-$OCPVERSION.tar.gz 
+					${WGET} $OCPDOWNLOADCLIENT/openshift-install-linux-$OCPVERSION.tar.gz 
 					tar xzf openshift-install-linux-$OCPVERSION.tar.gz
 					[ $? -ne 0 ] && { echo "Error downloading *openshift-installer*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 	
 					echo "Downloading the OCP client -> $PWD"
-					wget2 $OCPDOWNLOADCLIENT/openshift-client-linux-$OCPVERSION.tar.gz
+					${WGET} $OCPDOWNLOADCLIENT/openshift-client-linux-$OCPVERSION.tar.gz
 					tar xzf openshift-client-linux-$OCPVERSION.tar.gz
 					[ $? -ne 0 ] && { echo "Error downloading *openshift-client*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 				fi
@@ -6319,45 +6350,45 @@ process-stage-downloadocpbinaries() {
 					if [ "${OCPINSTALLMINORVERSION}" -ge 6 ]
 					then
 						##### KERNEL
-						wget2 $OCPDOWNLOADIMAGES/rhcos-live-kernel-x86_64
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-live-kernel-x86_64
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-live-kernel-x86_64, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 					
 						##### INITRAMFS
-						wget2 $OCPDOWNLOADIMAGES/rhcos-live-initramfs.x86_64.img
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-live-initramfs.x86_64.img
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-live-initramfs.x86_64.img, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 				
 						##### ROOTFS
-						wget2 $OCPDOWNLOADIMAGES/rhcos-live-rootfs.x86_64.img
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-live-rootfs.x86_64.img
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-live-rootfs.x86_64.img, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 				
 						##### METAL
-						wget2 $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 						
 					elif [ "${OCPINSTALLMINORVERSION}" -ge 3 ] # Version 4.5 or earlier
 					then
 						##### KERNEL
-						wget2 $OCPDOWNLOADIMAGES/rhcos-installer-kernel-x86_64
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-installer-kernel-x86_64
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-installer-kernel-x86_64, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 					
 						##### INITRAMFS
-						wget2 $OCPDOWNLOADIMAGES/rhcos-installer-initramfs.x86_64.img
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-installer-initramfs.x86_64.img
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-installer-initramfs.x86_64.img exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 				
 						##### METAL
-						wget2 $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz
 						[ $? -ne 0 ] && { echo "Error downloading $OCPDOWNLOADIMAGES/rhcos-metal.x86_64.raw.gz, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 					else
 						##### KERNEL
-						wget2 $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-kernel
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-kernel
 						[ $? -ne 0 ] && { echo "Error downloading *rhcos-kernel*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 					
 						### INITRAMFS
-						wget2 $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-initramfs.img
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-installer-initramfs.img
 						[ $? -ne 0 ] && { echo "Error downloading *rhcos-initramfs*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 				
 						##### METAL
-						wget2 $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-metal-bios.raw.gz
+						${WGET} $OCPDOWNLOADIMAGES/rhcos-${RHCOSVERSION}-x86_64-metal-bios.raw.gz
 						[ $? -ne 0 ] && { echo "Error downloading *rhcos-metal*, exiting..."; cd ..; do-remove-directory ${OCPVERSION}; cleanup-and-exit 1; } 
 					fi
 				fi
@@ -6545,7 +6576,7 @@ process-stage-httpserver() {
 	}
 
 	[ $1 == "rollback" ] && {
-		rollback-stage-progression "Unconfiguring installation webserver - content will remain in place."
+		rollback-stage-progression "Unconfiguring installation webserver - content will remain in place"
 		rm ${SYSTEMSTUBFILE_HTTPD}  2>/dev/null
 		rm $IMAGEREPO/index.html  2>/dev/null
 		rm -rf $IMAGEREPO/kubeconfig  2>/dev/null
@@ -6852,7 +6883,7 @@ process-stage-build-bootstrapnode() {
 
 		ask-user "Configure OCP bootstrap VM host" "Y" && {
 			# Bootstrap node is MAC address is the first to be defined 
-			build-ocp-node bootstrap ${BOOTSTRAPMAC} 2 ${BOOTSTRAPNODERAMSIZE} 20 bootstrap.ign
+			build-ocp-node bootstrap ${BOOTSTRAPMAC} ${BOOTSTRAPNODEVCPUS} ${BOOTSTRAPNODERAMSIZE} 20 bootstrap.ign
 			check-for-error-and-exit $? "Could not build VM for node [bootstrap]: virt-install error code [$?], check ~/.cache/virt-manager/virt-install.log"
 		}
 	}
@@ -6990,6 +7021,9 @@ process-stage-build-abi-boot-assets() {
 
 		advance-stage-progression "Build boot assets for Agent Based Installer"  && return
 
+		# NEWSFLASH! So now the ABI requires oc in the PATH...
+		PATH=$PATH:$OCPINSTALLSOURCE 
+
 		ask-user "Build boot assets" "Y" && {
 
 			${OCPINSTALLSOURCE}/openshift-install agent create pxe-files --dir=$CLUSTERSETUPDIR
@@ -7091,15 +7125,15 @@ process-stage-startocpbootstrap() {
 				fi
 			fi
 	
-			echo You can observe the output of the bootstrap node at this stage by issuing:
-			echo "- ssh -i $OCPSSHKEY core@${BOOTSTRAPIP} \"sudo journalctl -b -f -u release-image.service\""
-			echo "- ssh -i $OCPSSHKEY core@${BOOTSTRAPIP} \"sudo journalctl -b -f -u bootkube.service\""
-			echo
-			echo Or both together:
+			echo You can observe the output of the bootstrap node at this stage by issuing any of:
+			echo "- ssh -i $OCPSSHKEY core@${BOOTSTRAPIP} \"journalctl -b -f -u release-image.service\""
+			echo "- ssh -i $OCPSSHKEY core@${BOOTSTRAPIP} \"journalctl -b -f -u bootkube.service\""
 			echo "- ssh -i $OCPSSHKEY core@${BOOTSTRAPIP} \"journalctl -b -f -u release-image.service -u bootkube.service\""
-			echo
-			echo Or simply login to the bootstrap node for further analysis:
-			echo "- ssh -i $OCPSSHKEY core@${BOOTSTRAPIP}"
+			echo "  (this combines the first two)"
+			echo 
+			echo "You can also use the 'oc' command to observer cluster operator progress:"
+			echo "- source ${OCPSETUPENV} ---->  For access to \"oc\" at the command line"
+			echo "- oc get clusteroperators ->  To check operator progression, can also be \"oc get co\""
 			echo 
 
 			process-system-service-state restart virtqemud exitonfail
@@ -7175,9 +7209,7 @@ process-stage-waitforocpinstalltocomplete() {
 
 			echo "---------------------------------------------------------------------------"
 			echo "To debug from within master-0, issue this command in another window:"
-			echo "- ssh -i ${OCPSSHKEY} -o \"StrictHostKeyChecking no\" core@${MASTER0IP}"
-			echo "and from there, to follow the install you can issue:"
-			echo "- journalctl -b -f -u kubelet.service"
+			echo "- ssh -i ${OCPSSHKEY} -o \"StrictHostKeyChecking no\" core@${MASTER0IP} \"journalctl -b -f -u kubelet.service\""
 			echo "---------------------------------------------------------------------------"
 			echo
 			echo Some useful commands while waiting:
@@ -7269,6 +7301,8 @@ process-stage-waitforocpinstalltocomplete() {
 				# Create the final HAPROXY config file
 				echo "Updating HAProxy configuration..."
 				update-haproxy-config-file 
+
+				change-console-logo
 
 				# Cluster is done! We report outcome
 				print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
@@ -7408,12 +7442,11 @@ process-stage-gatherclusterconfiguration() {
 
 				if [ "${YAKKOTEMPLATE:0:4}" == "http" ]
 				then
-					wget2 -O ${OCPWGETTMP}-template ${YAKKOTEMPLATE} &>/dev/null
+					${WGET} -O ${OCPWGETTMP}-template ${YAKKOTEMPLATE} &>/dev/null
 					if [ $? -eq 0 ]
 					then
 						echo
-						print-in-colour green "Template from URL is available:"
-						print-in-colour green "${YAKKONAME} will validate (where possible) this configuration."
+						print-in-colour green "Template from URL is available: ${YAKKONAME} will attempt to validate this configuration."
 						YAKKOTEMPLATE=${OCPWGETTMP}-template 
 					else
 						cleanup-and-exit 1 orange "ERROR: Could not download template from URL [${YAKKOTEMPLATE}]"
@@ -7422,8 +7455,7 @@ process-stage-gatherclusterconfiguration() {
 					if [ -r ${YAKKOTEMPLATE} ]
 					then	
 						echo
-						print-in-colour green "Template from file is available:"
-						print-in-colour green "${YAKKONAME} will validate (where possible) this configuration."
+						print-in-colour green "Template from file is available: ${YAKKONAME} will attempt to validate this configuration."
 					else
 						if [[ "$YAKKOTEMPLATE" =~ $NUMBERRE ]]
 						then
@@ -7442,6 +7474,18 @@ process-stage-gatherclusterconfiguration() {
 			fi
 			echo
 
+			if [ -n "$YAKKOTEMPLATE" ]
+			then
+				echo "The template contains the following configuration:"
+				echo "--------------------------------------------------"
+				cat ${YAKKOTEMPLATE} | sed '/^$/d' | grep -v "^#"  # We show the template, but we won't check because we want this AUTOMATIC!
+				echo "--------------------------------------------------"
+				echo
+				ask-user "Continue building this configuration" Y
+				[ $? -ne 0 ] && cleanup-and-exit 1 orange "Aborting cluster build"
+				echo
+			fi
+			
 			# VALIDATE TEMPLATE BEGIN: We check that all needed values are present
 
 			[ -z "$CLUSTERNAME" ] && echo "ERROR: CLUSTERNAME needs to be set."
@@ -7495,7 +7539,7 @@ process-stage-gatherclusterconfiguration() {
 				if [[ "$OCPVERSION" =~ ^[0-9]+\.[0-9]+$ ]]
 				then
 					# User passwd a generic version, eg. 4.11
-					wget2 -O $OCPWGETTMP  https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest-$OCPVERSION/release.txt &>/dev/null
+					${WGET} -O $OCPWGETTMP  https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest-$OCPVERSION/release.txt &>/dev/null
 					check-for-error-and-exit $? "OpenShift Version $OCPVERSION is not available for download/install in OpenShift mirror"
 					OCPVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 				fi
@@ -7504,26 +7548,14 @@ process-stage-gatherclusterconfiguration() {
 
 			set-cluster-purpose-and-notes
 
-			# This will be necessary later and no point in saving an individual value
+			# VALIDATE TEMPLATE END: We check that all needed values are present
 
+			# This will be necessary later and no point in saving an individual value
 			if [ -z "$AGENTBASEDINSTALLER" ]
 			then
 				get-rhcos-dependency # This sets OCPDOWNLOADIMAGES and RHCOS version
 			fi
 
-			# VALIDATE TEMPLATE END: We check that all needed values are present
-
-			if [ -n "$YAKKOTEMPLATE" ]
-			then
-				echo
-				echo "The template contains the following configuration:"
-				echo "--------------------------------------------------"
-				cat ${YAKKOTEMPLATE} | sed '/^$/d' | grep -v "^#"  # We show the template, but we won't check because we want this AUTOMATIC!
-				echo "--------------------------------------------------"
-				echo
-				ask-user "Continue building this configuration" Y
-				[ $? -ne 0 ] && cleanup-and-exit 1 orange "Aborting cluster build"
-			fi
 		else
 			# THIS SECTION IS ALL ABOUT QUESTIONS 
 		
@@ -7888,7 +7920,7 @@ process-stage-gatherclusterconfiguration() {
 						# This is the preview of the upcoming release - typically a RC or release candidate
 						OCPDOWNLOADCLIENT=https://mirror.openshift.com/pub/openshift-v4/clients/ocp/candidate
 						OCPDOWNLOADIMAGES=https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/pre-release/latest
-						wget2 -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
+						${WGET} -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
 						check-for-error-and-exit $? "Failed to download version file for latest OCP build candidate"
 						OCPVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 						echo "OCP pre-release version [$OCPVERSION] will be downloaded to ${IMAGEREPO} if required"
@@ -7898,7 +7930,7 @@ process-stage-gatherclusterconfiguration() {
 						# This is the preview of the release after next - the latest is a nightly
 						OCPDOWNLOADCLIENT=https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/latest
 						OCPDOWNLOADIMAGES=https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/pre-release/latest
-						wget2 -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
+						${WGET} -O $OCPWGETTMP $OCPDOWNLOADCLIENT/release.txt &>/dev/null
 						check-for-error-and-exit $? "Failed to download version file for latest pre-build OCP"
 						OCPVERSION=$(cat $OCPWGETTMP | grep Version: | awk '{ print $2 }')
 						echo "OCP nightly version [$OCPVERSION] will be downloaded to ${IMAGEREPO} if required"
@@ -8308,7 +8340,7 @@ process-stage-postinstall() {
 			then
 				print-in-colour white "Runnin Cluster post-install tasks at URL"
 				print-in-colour white "${CLUSTERPOSTINSTALL}" 
-				wget2 -O $OCPWGETTMP ${CLUSTERPOSTINSTALL} 
+				${WGET} -O $OCPWGETTMP ${CLUSTERPOSTINSTALL} 
 				if [ $? -eq 0 ]
 				then
 					chmod +x $OCPWGETTMP
@@ -8318,10 +8350,11 @@ process-stage-postinstall() {
 					print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
 					echo
 					ask-user "Do you want to see the current cluster state report" Y noauto
-					[ $? -eq 0 ] && check-cluster-state
+					[ $? -eq 0 ] && { echo; check-cluster-state; }
 				else
 					print-in-colour orange "ERROR: Could not download cluster-post-install file ${CLUSTERPOSTINSTALL}"
 					print-in-colour orange "       No post installation process performed"
+					echo
 				fi
 			else	
 				if [ -r ${CLUSTERPOSTINSTALL} ]
@@ -8333,16 +8366,16 @@ process-stage-postinstall() {
 					print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
 					echo
 					ask-user "Do you want to see the current cluster state report" Y noauto
-					[ $? -eq 0 ] && check-cluster-state
+					[ $? -eq 0 ] && { echo; check-cluster-state; }
 				else	
 					echo "Post-installation file [${CLUSTERPOSTINSTALL}] not available for processing"
+					echo
 				fi
 			fi
 		else
 			echo "Post-install user-defined steps file not provided. Nothing to do."
+			echo
 		fi
-
-		echo
 	}
 
 	[ $1 == "rollback" ] && {
@@ -8448,6 +8481,7 @@ YAKKOID=$(ls -id $YAKKODIRECTORY | awk '{print $1}')
 YAKKOEXECUTABLE=$(realpath $0)
 [ $YAKKOID -ne 8650753 ] && chmod 554 $YAKKOEXECUTABLE
 
+# These cannot be set until YAKKODIRECTORY is set
 IMAGEREPO=${YAKKODIRECTORY}/images # The webserver will serve from here. oc and openshift-install are here already
 CLUSTERCONFIGFILE=${YAKKODIRECTORY}/.clusterconfig # Filename where all defaults for the cluster you are building are kept
 LASTBUILDCONFIG=${YAKKODIRECTORY}/.lastclusterbuild
@@ -8488,6 +8522,12 @@ then
 	# There will be no cluster built, nothing
 	yakko-backup $*
 fi
+
+if [ "$1" == describehw -o "$2" == describehw ]
+then
+	yakko-infra-operations describehw
+fi
+
 
 if [ "$1" == "runcommand" ]
 then
@@ -8792,11 +8832,6 @@ then
 	yakko-infra-operations purgedownloads
 fi
 	
-if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == describehw ) || "${YAKKOCALLOPTION}" == describehw ]]
-then
-	yakko-infra-operations describehw
-fi
-
 if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == listclusters ) || "${YAKKOCALLOPTION}" == listclusters ]]
 then
 	yakko-infra-operations listclusters
@@ -8922,11 +8957,11 @@ then
 			cleanup-and-exit 0
 		fi
 	fi
-	load-system-release-info
-	echo "${TESTEDPLATFORMS}" | grep "${THISPLATFORM}" &>/dev/null
+	
+	echo "${TESTEDPLATFORMS}" | grep "${YAKKOHOSTPLATFORM}" &>/dev/null
 	if [ $? -ne 0 ]
 	then
-		echo "NOTE: This system is using [${THISPLATFORM}], which has not been tested."
+		echo "NOTE: This system is using [${YAKKOHOSTPLATFORM}], which has not been tested."
 		echo "      This version of ${YAKKONAME} has only been tested against ${TESTEDPLATFORMS}"
 	fi
 
@@ -8962,7 +8997,7 @@ else
 	echo ${NOTICEYAKKOVERSION} | grep ${YAKKOVERSION} &>/dev/null
 	if [ $? -ne 0 ] # We haven't notified that this version is different to the build
 	then
-		if [ "$BUILTWITHYAKKOVERSION" != "$YAKKOVERSION" ]
+		if [ "$(echo $BUILTWITHYAKKOVERSION | cut -f1 -d.)" != "$(echo $YAKKOVERSION | cut -f1 -d.)" ]
 		then
 			echo
 			print-in-colour red "ALERT: This cluster was built using ${YAKKONAME} version $BUILTWITHYAKKOVERSION."
