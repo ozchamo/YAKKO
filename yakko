@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=8.03
-YAKKODATE=20241001.0017
+YAKKOVERSION=8.04
+YAKKODATE=20241026.1915
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -42,7 +42,7 @@ DEFAULTWORKERRAMSIZE=8000  # Recommended 8GB
 WORKERRAMSIZE=8000         # Recommended 8GB
 MINWORKERRAMSIZE=8000      # This boundary has been changing as OCP revs up!
 BOOTSTRAPNODERAMSIZE=16000 # See recommendation links above - RAM size of the bootstrap has changed over time...
-MAXMEMBALLONSIZE=2000      # We provide a little room for growth. No one wants to swap!
+MAXMEMBALOONSIZE=2000      # We provide a little room for growth. No one wants to swap!
 
 # CPU Sizing
 MASTERNODECOUNT=3          # Default clusters by YAKKO are built as 3x0
@@ -301,11 +301,12 @@ generate-login-command-file() {
 	then
 		echo "oc login -u ${LOGINUSERNAME} -p $(cat ${CLUSTERSETUPDIR}/auth/kubeadmin-password) --insecure-skip-tls-verify=true --server=https://api.${CLUSTERFQDN}:6443" > ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
 	else
+		sed -i "s/oc login -u kubeadmin/#oc login -u kubeadmin/" ${YAKKODIRECTORY}/$LOGINCOMMANDFILE &>/dev/null
 		if [  "${LOGINFILEHASPASSWORD}" -eq 0 ] # O means it's allowed to put the password in the file
 		then
-			echo "oc login -u ${LOGINUSERNAME} -p ${LOGINPASSWORD} --insecure-skip-tls-verify=true --server=https://api.${CLUSTERFQDN}:6443" > ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
+			echo "oc login -u ${LOGINUSERNAME} -p ${LOGINPASSWORD} --insecure-skip-tls-verify=true --server=https://api.${CLUSTERFQDN}:6443" >> ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
 		else
-			echo "oc login -u ${LOGINUSERNAME} --insecure-skip-tls-verify=true --server=https://api.${CLUSTERFQDN}:6443" > ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
+			echo "oc login -u ${LOGINUSERNAME} --insecure-skip-tls-verify=true --server=https://api.${CLUSTERFQDN}:6443" >> ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
 		fi
 	fi
 	chmod 700 ${YAKKODIRECTORY}/$LOGINCOMMANDFILE
@@ -1943,7 +1944,7 @@ build-ocp-node() {
 		#openshift install ignition: no config provided by user
 		#virt-install \
 		#	--name ${NODEVMNAME} \
-		#	--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
+		#	--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 		#	--vcpus ${NODEVCPUS} \
 		#	--cpu host,+vmx \
 		#	--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -1960,7 +1961,7 @@ build-ocp-node() {
 		#--cdrom ${IMAGEREPO}/${OCPINSTALLVERSION}/agent.x86_64.iso \
 		virt-install \
 			--name ${NODEVMNAME} \
-			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
+			--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 			--vcpus ${NODEVCPUS} \
 			--cpu host,+vmx \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -1969,7 +1970,7 @@ build-ocp-node() {
 			--network network=${NETWORKNAME},mac=${NODEMACADDRESS}  \
 			--noautoconsole \
 			--wait -1 \
-			--metadata description="YAKKODIRECTORY=${YAKKODIRECTORY} \
+			--metadata description="YAKKODIRECTORY=${YAKKODIRECTORY}
 CLUSTERFQDN=$CLUSTERFQDN
 BASENETWORK=$BASENETWORK" \
 			--print-xml > ${OCPVMDISKDIR}/${NODEVMNAME}.xml
@@ -2000,7 +2001,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
+			--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 			--vcpus ${NODEVCPUS} \
 			--cpu host,+vmx \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -2017,7 +2018,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 3 ]
 	then
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
+			--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 			--vcpus ${NODEVCPUS} \
 			--cpu host \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -2033,7 +2034,7 @@ BASENETWORK=$BASENETWORK" \
 		BUILDOCPNODERESULT=$?
 	else
 		virt-install \
-			--memory=${NODERAMSIZE},maxmemory=${MAXMEMBALLONSIZE} \
+			--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 			--vcpus ${NODEVCPUS} \
 			--cpu host \
 			--disk path=${OCPVMDISKDIR}/${NODEVMNAME}.qcow2,size=${NODEDISKSIZE},bus=virtio,format=qcow2 \
@@ -2131,7 +2132,8 @@ yakko-backup() {
 		echo
 		print-in-colour green "Backing up yakko code"
 		echo
-		echo "Total code lines (exc. comments and blanks): " $(cat yakko | grep -v "^$" | grep -cv "^ *#")
+		echo "Total code lines (exc. comments and blanks): " $(cat yakko | grep -v "^$" | grep -cv "^	*#")
+		[ -r "$YAKKOTALLY" ] && echo "Clusters built on this host: $(cat "$YAKKOTALLY" | wc -l)"
 		echo
 
 		# If there is a message attached, construe this as an updated version!
@@ -2566,6 +2568,7 @@ check-if-another-yakko-cluster-running() {
 
 		OTHERCLUSTERDIR=$(virsh desc ${RUNNINGCLUSTER} | grep YAKKODIRECTORY=  | cut -f2 -d=)
 		OTHERCLUSTERID=$(echo ${RUNNINGCLUSTER}  | cut -f4 -d.)
+		OTHERCLUSTERID=${RUNNINGCLUSTER##*.}
 
 		# This is just a small precaution should the above fail
 		echo
@@ -3260,7 +3263,6 @@ snap-active-cluster() {
 	fi
 
 	print-in-colour green "All nodes have been resumed"
-	echo
 }
 
 
@@ -3380,7 +3382,7 @@ yakko-infra-operations() {
 	
 			for NODENAME in ${NODELIST}
 			do
-				virsh setmaxmem ${NODENAME} ${MAXMEMBALLONSIZE}M &>/dev/null
+				#virsh setmaxmem ${NODENAME} ${MAXMEMBALOONSIZE}M &>/dev/null
 				echo "Starting up: ${NODENAME}"
 				NODESTATE=$(virsh dominfo ${NODENAME} | grep State: | awk '{print $2}')
 				if [ ${NODESTATE} == paused ]
@@ -3400,8 +3402,10 @@ yakko-infra-operations() {
 			echo "- yakko - for a general update"
 			echo
 	
-			print-in-colour green "Cluster has begun boot-up $(date +%H:%M%p)"
-			wait-for-stable-operators 20 # We allow 30 minute waittime for cluster to appear fully up, all COs 
+			print-in-colour green "Cluster has begun boot-up - time: $(date +%H:%M%p)"
+			sleep 120 # We give the nodes a little time to boot...
+
+			wait-for-stable-operators 30 # We allow 30 minute waittime for cluster to appear fully up, all COs 
 			if [ $? -eq 0 ]
 			then
 				echo "Cluster appears ready. Attempting login..."
@@ -3441,7 +3445,8 @@ yakko-infra-operations() {
 			fi
 	
 			echo
-			print-in-colour green "Cluster API endpoint https://api.${CLUSTERFQDN}:6443 is now available."
+			print-in-colour green "Cluster is now up - time: $(date +%H:%M%p)"
+			print-in-colour green "API endpoint https://api.${CLUSTERFQDN}:6443 is now available."
 			print-in-colour green "Web console may take a little longer."
 		fi
 	fi
@@ -3522,6 +3527,7 @@ yakko-infra-operations() {
 			print-in-colour orange "All nodes are now suspended."
 		else
 			# User picked 2...
+			CLUSTERCERTIFICATEEXPIRY=$(${OCCOMMAND} -n openshift-kube-apiserver-operator get secret kube-apiserver-to-kubelet-signer -o jsonpath='{.metadata.annotations.auth\.openshift\.io/certificate-not-after}')
 			print-in-colour white "Shutting down all nodes, please wait a few moments."
 			echo
 
@@ -3540,6 +3546,7 @@ yakko-infra-operations() {
 				sleep 2
 				echo -n "."
 			done
+			print-in-blink "ALERT: Your cluster certificates will expire on: $CLUSTERCERTIFICATEEXPIRY"
 			print-in-colour orange "All cluster nodes are now powered off."
 		fi
 
@@ -3569,8 +3576,11 @@ yakko-infra-operations() {
 		print-option-header infra "Restore cluster [${CLUSTERFQDN}]"
 		print-in-colour orange "This feature is EXPERIMENTAL. Snap running clusters and restore to running clusters only."  
 		print-in-colour orange "Try stopped clusters at your own peril!"
-		echo
 
+		# We test if there are snapshots registered...
+		[ -z "$(virsh snapshot-list --name master-0.${CLUSTERFQDN}.${YAKKOID})" ] && cleanup-and-exit 1 "There are no snapshots registered for this cluster"
+
+		echo
 		LATESTSNAP=$(virsh snapshot-list --name master-0.${CLUSTERFQDN}.${YAKKOID} | grep . | tail -n 1)
 		echo "The following snapshots are available for the cluster nodes:"
 		virsh snapshot-list --name master-0.${CLUSTERFQDN}.${YAKKOID} | grep . | tac
@@ -4696,7 +4706,7 @@ yakko-ops-operations() {
 				echo "        name: htpass-secret"
 			} > ${TMPOAUTHCONFIGFILE}
 
-			${OCCOMMAND} apply -f ${TMPOAUTHCONFIGFILE}
+			${OCCOMMAND} apply -f ${TMPOAUTHCONFIGFILE} &>/dev/null
 			check-for-error-and-exit $? "Could not apply OAuth Custom Resource for HTaccess (see ${TMPOAUTHCONFIGFILE})" 
 
 			htpasswd -c -B -b ${HTPASSWDFILE} $NEWUSER $NEWPASSWORD
@@ -7483,15 +7493,14 @@ process-stage-gatherclusterconfiguration() {
 				echo
 				ask-user "Continue building this configuration" Y
 				[ $? -ne 0 ] && cleanup-and-exit 1 orange "Aborting cluster build"
-				echo
 			fi
 			
 			# VALIDATE TEMPLATE BEGIN: We check that all needed values are present
 
-			[ -z "$CLUSTERNAME" ] && echo "ERROR: CLUSTERNAME needs to be set."
-			[ -z "$CLUSTERDOMAIN" ] && echo "ERROR: CLUSTERDOMAIN needs to be set."
-			[ -z "$OCPVMDIR" ] && echo "ERROR: OCPVMDIR needs to be set - the directory where VMs will be created."
-			[ -z "$MASTERNODECOUNT" ] && echo "ERROR: MASTERNODECOUNT needs to be set - 1 or 3."
+			[ -z "$CLUSTERNAME" ] && cleanup-and-exit 1 red "ERROR: CLUSTERNAME needs to be set."
+			[ -z "$CLUSTERDOMAIN" ] && cleanup-and-exit 1 red "ERROR: CLUSTERDOMAIN needs to be set."
+			[ -z "$OCPVMDIR" ] && cleanup-and-exit 1 red "ERROR: OCPVMDIR needs to be set - the directory where VMs will be created."
+			[ -z "$MASTERNODECOUNT" ] && cleanup-and-exit 1 red "ERROR: MASTERNODECOUNT needs to be set - 1 or 3."
 
 			# These are optional, but we remark...
 			[ -z "$WORKERNODECOUNT" ] && {
@@ -7529,6 +7538,14 @@ process-stage-gatherclusterconfiguration() {
 			then	
 				find-unused-base-network
 			fi
+
+			[ -n "$AGENTBASEDINSTALLER" ] && {
+				[ "$AGENTBASEDINSTALLER" == Y ] && AGENTBASEDINSTALLER="agent"
+				[ "$AGENTBASEDINSTALLER" == N ] && AGENTBASEDINSTALLER=""
+				[ "$AGENTBASEDINSTALLER" != "agent" ] && cleanup-and-exit 1 red "ERROR: AGENTBASEDINSTALLER needs to be 'Y', 'N', 'agent' or empty"
+			}
+
+			echo
 
 			if [ "$OCPVERSION" == "latest" ]
 			then
@@ -7979,6 +7996,7 @@ process-stage-gatherclusterconfiguration() {
 				echo -n "Enter the directory where you wish to place the OCP VM disks for this cluster [\"${OCPVMDIR}\"]: "
 				read RESPONSE
 				[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDIR} 
+				mkdir -p ${RESPONSE} &>/dev/null
 				if [ ! -d "$RESPONSE" ] 
 				then
 					echo "$RESPONSE is not a valid directory!" 
