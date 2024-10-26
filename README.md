@@ -10,8 +10,12 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
+## NOTE IF YOU HAVE 8.03!
+8.03 had a bad little bug with memory settings of the VMs that shows up after you restart a cluster. 
+No need to panic - just replace with 8.04.
+
 ## CURRENT VERSION: 8.04 (20241026.1915)
-**What's new?**
+**What's new with 8.0x?**
 - Tested on RHEL 9.4 and Fedora 40
 - Tested with OpenShift 4.15 and 4.16 in rigour, and did some back testing of older versions (4.2, 4.4, 4.6) for fun.
 - As always, SNO and multi-master/multi-node configs, including 1 master and multiple workers.
