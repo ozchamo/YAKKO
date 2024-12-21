@@ -14,10 +14,15 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 8.03 had a bad little bug with memory settings of the VMs that shows up after you restart a cluster. 
 No need to panic - just replace with 8.04.
 
-## CURRENT VERSION: 8.04 (20241026.1915)
+## CURRENT VERSION: 8.1 (20241221.1459)
+
+Update 8.1:
+- Tested new versions of OSs (RHEL 9.5/Fedora 41) and OCP (4.17) - Christmas present check!
+- Improved cluster startup reporting, it was a bit misleading as to how long a cluster took to boot
+
 **What's new with 8.0x?**
-- Tested on RHEL 9.4 and Fedora 40
-- Tested with OpenShift 4.15 and 4.16 in rigour, and did some back testing of older versions (4.2, 4.4, 4.6) for fun.
+- Tested on RHEL 9.4, 9.5 and Fedora 40 and 41
+- Tested with OpenShift 4.16 and 4.17 in rigour (should work all the way to 4.2...)
 - As always, SNO and multi-master/multi-node configs, including 1 master and multiple workers.
 - **Templates and post-cluster installs revamp!**
   - You can now build from templates in files and in URLs - see 'yakko usage': 'yakko buildclusterfromtemplate \<file/URL\>'   

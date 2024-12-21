@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=8.04
-YAKKODATE=20241026.1915
+YAKKOVERSION=8.1
+YAKKODATE=20241221.1459
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -49,12 +49,14 @@ MASTERNODECOUNT=3          # Default clusters by YAKKO are built as 3x0
 MASTERVCPUS=4              # Recommended 4, though with SNO/single master it is better to have 8
 WORKERVCPUS=2              # Recommended 2
 RECOMMENDEDCORECOUNT=8     # This is for the YAKKO host to work well. Less than this? try harder when installing.
-BOOTSTRAPNODEVCPUS=4        # See recommendation links above - CPU count of the bootstrap has changed over time...
+BOOTSTRAPNODEVCPUS=4       # See recommendation links above - CPU count of the bootstrap has changed over time...
+MAXNODEVCPUS=8             # Max number of allowable CPUs for a worker node
 
 # Disk Sizing
 MASTERDISKSIZE=120         # Disk image size for master, GB  # OCP 4.15 needs 120GB for Agent Based Install
 WORKERDISKSIZE=120         # Disk image size for worker, GB
-MAXNODEVCPUS=4             # Max number of allowable CPUs for a worker node
+
+#Node Sizing
 MAXWORKERNODES=5           # Max number of worker nodes allowed at cluster BUILD time, after that, no limit 
 
 # Other parameters - these are configured by YAKKO, but here you go
@@ -3335,7 +3337,7 @@ yakko-infra-operations() {
 
 		print-option-header infra "Start cluster [${CLUSTERFQDN}]"
 
-		check-for-other-yakko-cluster-files
+		#check-for-other-yakko-cluster-files
 		check-cluster-power
 		CLUSTERSTATE=$?
 
@@ -3368,7 +3370,7 @@ yakko-infra-operations() {
 				fi
 			done
 			sleep 1
-			print-in-colour green "All nodes are now resumed. Check 'oc get nodes'."
+			print-in-colour green "All nodes are now active. Check 'oc get nodes'."
 
 		else  # Cluster is shutdown
 			check-for-other-yakko-cluster-files
@@ -3403,28 +3405,36 @@ yakko-infra-operations() {
 			echo
 	
 			print-in-colour green "Cluster has begun boot-up - time: $(date +%H:%M%p)"
-			sleep 120 # We give the nodes a little time to boot...
 
-			wait-for-stable-operators 30 # We allow 30 minute waittime for cluster to appear fully up, all COs 
-			if [ $? -eq 0 ]
-			then
-				echo "Cluster appears ready. Attempting login..."
-				if [ ${LOGINFILEHASPASSWORD} -eq 1 ] 
+			CLUSTERAVAILABLE=N
+			TIMEDOWNCOUNTER=30 #That's how long we are willing to wait for cluster to come up
+			while [ $TIMEDOWNCOUNTER -ne 0 ]
+			do
+				wait-for-stable-operators 1 &>/dev/null
+				if [ $? -eq 0 ]
 				then
-					echo -n "To allow ${YAKKONAME} to report on the cluster state, please enter the password for admin user \"${YAKKOADMIN}\": "
-					read -s ADMINPASSWORD
-					echo
-					${OCCOMMAND} login --insecure-skip-tls-verify=true -u ${YAKKOADMIN} -p ${ADMINPASSWORD} https://api.${CLUSTERFQDN}:6443 &>/dev/null
-				else
-					source ${CLUSTERLOGINFILE} &>/dev/null
-				fi
+					echo "Cluster appears ready. Attempting login..."
+					if [ ${LOGINFILEHASPASSWORD} -eq 1 ] 
+					then
+						echo -n "To allow ${YAKKONAME} to report on the cluster state, please enter the password for admin user \"${YAKKOADMIN}\": "
+						read -s ADMINPASSWORD
+						${OCCOMMAND} login --insecure-skip-tls-verify=true -u ${YAKKOADMIN} -p ${ADMINPASSWORD} https://api.${CLUSTERFQDN}:6443 &>/dev/null
+					else
+						source ${CLUSTERLOGINFILE} &>/dev/null
+					fi
 	
-				${OCCOMMAND} whoami &>/dev/null
-				[ $? -eq 0 ] && {
-					echo
-					echo "Now logged in to OCP as $(${OCCOMMAND} whoami)"
-				}
-			else
+					${OCCOMMAND} whoami &>/dev/null
+					[ $? -eq 0 ] && {
+						echo "Now logged in to OCP as $(${OCCOMMAND} whoami)"
+						CLUSTERAVAILABLE=Y
+					}
+					break
+				fi
+				((TIMEDOWNCOUNTER--))
+			done
+			
+			if [ $CLUSTERAVAILABLE == N ]
+			then
 				PENDINGCSRS=$(${OCCOMMAND} get csr 2>/dev/null | grep Pending | awk '{ print $1 }')
 				if [ -n "${PENDINGCSRS}" ]
 				then
@@ -3434,7 +3444,7 @@ yakko-infra-operations() {
 					echo "You will need to issue 'yakko ops approvecsrs' to allow the cluster to come up."
 				else
 					echo "Not waiting any longer for administrative login. "
-					echo "The cluster may still be coming up."
+					print-in-colour orange "The cluster may still be coming up."
 					echo
 					echo "To inspect status you may want to try issuing:"
 					echo "- 'oc get co'"
@@ -3444,10 +3454,9 @@ yakko-infra-operations() {
 				cleanup-and-exit 1
 			fi
 	
-			echo
 			print-in-colour green "Cluster is now up - time: $(date +%H:%M%p)"
-			print-in-colour green "API endpoint https://api.${CLUSTERFQDN}:6443 is now available."
-			print-in-colour green "Web console may take a little longer."
+			echo "API endpoint https://api.${CLUSTERFQDN}:6443 is now available."
+			echo "Web console may take a little longer."
 		fi
 	fi
 
@@ -3527,7 +3536,6 @@ yakko-infra-operations() {
 			print-in-colour orange "All nodes are now suspended."
 		else
 			# User picked 2...
-			CLUSTERCERTIFICATEEXPIRY=$(${OCCOMMAND} -n openshift-kube-apiserver-operator get secret kube-apiserver-to-kubelet-signer -o jsonpath='{.metadata.annotations.auth\.openshift\.io/certificate-not-after}')
 			print-in-colour white "Shutting down all nodes, please wait a few moments."
 			echo
 
@@ -3546,7 +3554,7 @@ yakko-infra-operations() {
 				sleep 2
 				echo -n "."
 			done
-			print-in-blink "ALERT: Your cluster certificates will expire on: $CLUSTERCERTIFICATEEXPIRY"
+			[ -n "$CLUSTERCERTSEXPIRY" ] && print-in-blink "ALERT: Your cluster certificates will expire on: $CLUSTERCERTSEXPIRY"
 			print-in-colour orange "All cluster nodes are now powered off."
 		fi
 
@@ -3666,7 +3674,7 @@ yakko-infra-operations() {
 					# master-0 is running, let's update time sync
 					echo "Restoring a snapshot brings up a cluster that is out of time sync."
 					echo "Syncing time may disrupt the cluster state depending on the time gap."
-					ask-user "Do you want to NTP time sync the nodes" Y
+					ask-user "Do you want to NTP time sync the node(s)" Y
 					if [ $? -eq 0 ]
 					then
 						time-sync-all-nodes
@@ -4374,7 +4382,14 @@ yakko-infra-operations() {
 	then
 		#infradescribehw
 
+		echo
 		print-option-header infra "Describe this computer's hardware"
+
+		if [ -n "$(virt-what)" ]
+		then
+			print-in-colour orange "NOTE: This is a virtualised system"
+			echo
+		fi
 
 		print-in-colour green  "Computer info:"
 		lshw | sed -n "2,4p" | sed -e "s/^ \+//g"
@@ -5329,16 +5344,16 @@ yakko-ops-operations() {
 		AUTOSETUP=N
 		if [ -n "$1" ]
 		then
-			CERTBUNDLEFILE=$1
-			CERTBUNDLEPATH=$(dirname $1)
+			CERTBUNDLEPATH=$1
 			AUTOSETUP=Y
 
-			if [ ! -r ${CERTBUNDLEFILE} ]
+			if [ ! -r ${CERTBUNDLEPATH}/fullchain.pem -o ! -r ${CERTBUNDLEPATH}/privkey.pem ]
 			then
-				echo "$1 is not a valid certificate bundle - check file and permissions!"
-				cleanup-and-exit 1
+				cleanup-and-exit 1 "$1 is not a valid certificate bundle directory - check files fullchain.pem and privkey.pem and permissions!"
 			fi
 		else
+			CERTBUNDLEPATH=/etc/letsencrypt/live/apps.${CLUSTERFQDN}
+
 			echo "ATTENTION: To proceed you must:" 
 			echo "- own your own domain [${CLUSTERDOMAIN}] - DO YOU?"
 			echo "- have admin access to the domain's control panel"
@@ -5358,57 +5373,39 @@ yakko-ops-operations() {
 			echo "  3) Follow the instructions above and use the following to test if the DNS challenge is resolving"
 			echo "     before certbot checks the challenge!"
 			echo "     https://dnschecker.org/#TXT/_acme-challenge.apps.${CLUSTERFQDN}"
-			echo
+			echo 
+			echo "  4) This will generate four files in $CERTBUNDLEPATH:"
+			echo "     - fullchain.pem - which bundles:"
+			echo "       - chain.pem and "
+			echo "       - cert.pem"
+			echo "     - privkey.pem - the private key (do not make public)"
+			echo "     We will only require fullchain.pem and privkey.pem"
+			echo 
 			echo "  NOTE: Visit for help: https://stephennimmo.com/securing-openshift-ingress-with-lets-encrypt/"
 			echo "  NOTE: See here for expired certificates: https://dentrassi.de/2021/01/18/recovering-from-an-expired-openshift-certificate/"
 			echo
 
 			ask-user "Are you ready to proceed?" Y auto
-			if [ $? -ne 0 ]
-			then
-				echo "Exiting. Just run this command again when all requirements are met."
-				cleanup-and-exit 0
-			fi
+			[ $? -ne 0 ] && cleanup-and-exit 0 "Run this command again when all requirements are met"
 			echo
-
-			CERTBUNDLEPATH=/etc/letsencrypt/live/${CLUSTERFQDN}
-			CERTBUNDLEFILE=${CERTBUNDLEPATH}/fullchain.pem
-
-			# WE check in advance if the cert is where certbot puts it...
-			if [ ! -r ${CERTBUNDLEFILE} ]
-			then
-				CERTBUNDLEFILE=""
-			fi
 
 			while true
 			do
-				if [ -z "${CERTBUNDLEFILE}" ]
-				then
-					echo -n "Enter path to certificate bundle: "
-				else
-					echo -n "Enter path to certificate bundle [$CERTBUNDLEFILE]: "
-				fi
-				read CERTBUNDLEALTFILE
+				echo -n "Enter the DIRECTORY where the certificate bundle resides [$CERTBUNDLEPATH]: "
+				read CERTBUNDLEALTPATH
+				[ -z "${CERTBUNDLEALTPATH}" ] && CERTBUNDLEALTPATH=${CERTBUNDLEPATH}
+				CERTBUNDLEALTFILE=$CERTBUNDLEALTPATH/fullchain.pem
 	
-				if [ -z "${CERTBUNDLEALTFILE}" -a -n "${CERTBUNDLEFILE}" ]
-				then 
-					# The user accepted the default which has been verified already
-					break
-				fi
-
-				if [ -n "${CERTBUNDLEALTFILE}" ]
+				if [ -r ${CERTBUNDLEALTFILE} ]
 				then
-					if [ -r ${CERTBUNDLEALTFILE} ]
-					then
-						CERTBUNDLEFILE=${CERTBUNDLEALTFILE}
-						break
-					else
-						echo "Invalid certificate bundle."
-						echo
-						continue
-					fi
+					CERTBUNDLEPATH=${CERTBUNDLEALTPATH}
+					CERTBUNDLEFILE=${CERTBUNDLEALTFILE}
+					break
+				else
+					echo "Invalid certificate bundle / directory (could not access fullchain.pem"
+					echo
+					continue
 				fi
-
 			done
 		fi
 
@@ -5422,7 +5419,7 @@ yakko-ops-operations() {
 
 		echo
 
-		${OCCOMMAND} create configmap custom-ca --from-file=ca-bundle.cert=${CERTBUNDLEFILE} -n openshift-config
+		${OCCOMMAND} create configmap custom-ca --from-file=ca-bundle.crt=${CERTBUNDLEFILE} -n openshift-config
 
 		## Test on V4.30+
 		#${OCCOMMAND} patch proxy/cluster --type=merge  --patch='{"spec":{"trustedCA":{"name":""}}}'
@@ -5784,7 +5781,7 @@ process-stage-sshclient() {
 		rm -r ${OCPSSHKEY}.pub &>/dev/null
 
 		# it's the IP address that gets logged
-		sed -i "/${BASENETWORK}/d" /root/.ssh/known_hosts
+		sed -i "/${BASENETWORK}/d" /root/.ssh/known_hosts &>/dev/null
 	}
 }
 
@@ -8761,7 +8758,8 @@ then
 	fi
 
 	hostname >  ${CANDIDATEYAKKODIRECTORY}/.yakkohome
-	check-for-error-and-exit $? "Could not create installer stub in ${CANDIDATEYAKKODIRECTORY}"
+	check-for-error-and-exit $? "Could not create installation stub in ${CANDIDATEYAKKODIRECTORY}"
+
 
 	if [ -r ${YAKKODIRECTORY}/images ]
 	then
