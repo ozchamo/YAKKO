@@ -3981,7 +3981,7 @@ yakko-infra-operations() {
 			echo -n "Enter the new RAM size (MiB) for node \"${NODETORESIZE}\": "
 			read NEWRAMSIZE
 
-			[ -z "$NEWRAMSIZE" ] && contrinue
+			[ -z "$NEWRAMSIZE" ] && continue
 
 			! [[ $NEWRAMSIZE =~ $NUMBERRE ]] && {
 				echo "Error: Not a number. Try again..."
