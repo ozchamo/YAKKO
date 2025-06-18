@@ -28,24 +28,17 @@ platform:
 to file in your YAKKO directory at install/install-config.yaml
 
 Easy!
- 
+
+## CURRENT VERSION: 8.1 (20241221.1459)
+Update 8.1:
+- Tested new versions of OSs (RHEL 9.5/Fedora 41) and OCP (4.17) - Christmas present check!
+- Improved cluster startup reporting, it was a bit misleading as to how long a cluster took to boot
 
 ## NOTE IF YOU HAVE 8.03!
 8.03 had a bad little bug with memory settings of the VMs that shows up after you restart a cluster. 
 No need to panic - just replace with 8.04 or newer.
 
 ## CURRENT VERSION: 8.1 (20241221.1459)
-
-Update 8.2:
-- Tested new versions of OSs (RHEL 9.5/Fedora 42 and YES, RHEL 10!) and OCP (4.18) - Christmas present check!
-- Further improved cluster startup reporting, it was a bit misleading as to how long a cluster took to boot
-- Snapshot functionality has been overhauled, you can take (and rollback to) snapshots of running (at your peril) and stopped clusters
-- Added infra option 'startonboot' which enables automatic startup of a cluster when the host system boots using the systemd framework
-- Clone your cluster!!! to another disk and run it from there, YES! Perhaps best to call it "BYOC", where you can bring your own cluster to somebody else's server. This is about as experimental as it gets, but as the foundation, it permits you to:
-  - 1) clone a cluster 
-  - 2) migrate a cluster to another system 
-  - 3) carry a cluster with you and 
-  - 4) even use it as backup of a cluster
 
 **In case you missed it: what's new with 8.0x?**
 - Tested on RHEL 9.4, 9.5 and Fedora 40 and 41
