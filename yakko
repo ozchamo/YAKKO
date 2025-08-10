@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.0
-YAKKODATE=20250708.1747
+YAKKOVERSION=9.01
+YAKKODATE=20250810.2149
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -129,7 +129,7 @@ YAKKOADMIN=kubeadmin # once deleted this is stored as "" in CLUSTERCONFIGFILE
 PAUSEFORCONFIGEDIT=1
 SPINNERPID=0
 CSRAPPROVALPID=0
-ADDNODETIMEOUT=900   # TIMER: If I cannot add a node within timeout (this multiplied by number of nodes)
+ADDNODETIMEOUT=1200   # TIMER: If I cannot add a node within timeout (this multiplied by number of nodes)
 YAKKOTEXTCOLOUR=brightblue  # Look and feel :)
 
 # YAKKO parameter options
@@ -205,6 +205,7 @@ populate-cluster-config-file() {
 		echo "REDUCEPROMETHEUES=${REDUCEPROMETHEUS}"
 		echo "WEBSERVERPORT=${WEBSERVERPORT}"
 		echo "LOGINFILEHASPASSWORD=0"  
+		echo "SHOWADDITIONALINFO=0 # change to 1 to show less status info when calling 'yakko'"
 
 		# These exist in lastclusterconfig too, but resizing will change it here only
 		echo "MASTERNODECOUNT=${MASTERNODECOUNT}"
@@ -440,7 +441,7 @@ start-spinner() {
 
 	while true
 	do      
-		printf "$SPINNERSTRING %s\r" "${cursor[i++ % ${#cursor[@]}]}";      
+		printf -- "$SPINNERSTRING %s\r" "${cursor[i++ % ${#cursor[@]}]}";      
 		sleep 0.25
 		trap "tput cnorm;exit" SIGTERM # Restore the cursor and exit on signal
 		trap "tput cnorm;exit" SIGINT  # Restore the cursor and exit on signal
@@ -749,12 +750,12 @@ install-package-if-missing() {
 	# $1 is the package to check for
 	local PACKAGE=$1
 
-	start-spinner "Checking if package [$PACKAGE] is installed"
+	start-spinner "- Checking if package [$PACKAGE] is installed"
 	check-if-package-is-installed ${PACKAGE}
 	if [ $? -ne 0 ] 
 	then
 		stop-spinner
-		start-spinner "Installing package [$PACKAGE]"
+		echo "- Installing package [$PACKAGE]"
 		dnf -y install $PACKAGE
 		check-for-error-and-exit $? "Failed to install package [$PACKAGE]"
 	else 
@@ -785,6 +786,7 @@ install-required-yakko-packages() {
 	else
 		echo
 		print-in-colour orange "${YAKKONAME} will look for the required packages and prompt you to install any that are missing."
+		ALLPACKAGESINSTALLED=0
 		for PACKAGE in ${REQUIREDPACKAGES}
 		do
 			echo -n "> [$PACKAGE]: "
@@ -794,8 +796,10 @@ install-required-yakko-packages() {
 				echo "installed"
 			else
 				print-in-colour orange "NOT INSTALLED"
+				ALLPACKAGESINSTALLED=1
 			fi
 		done
+		check-for-error-and-exit $ALLPACKAGESINSTALLED "Some required packages are not installed. YAKKO will not continue until these are present"
 	fi
 }
 
@@ -1388,6 +1392,13 @@ check-if-openshift-version-is-valid() {
 	fi
 
 	OCPINSTALLMINORVERSION=$(echo ${OCPVERSION}|cut -f2 -d.)
+
+	if [ "$OCPINSTALLMINORVERSION" == 1 ] # OpenShift 4.1.x
+	then
+		print-in-colour orange "ERROR: YAKKO cannot install OCP 4.1"
+		return 1
+	fi
+
 	if [ "$OCPINSTALLMINORVERSION" == 2 ] # OpenShift 4.2.x
 	then
 		print-in-colour yellow "NOTE: OpenShift 4.2 will be built with 'stable/latest' - 4.2.36"
@@ -1439,8 +1450,8 @@ check-if-openshift-version-is-valid() {
 			return 1
 		fi
 	else
-		echo "OCP Version $OCPVERSION is available for install."
 		OCPINSTALLMINORVERSION=$(echo ${OCPVERSION}|cut -f2 -d.)
+		echo "OCP Version $OCPVERSION is available for install."
 		return 0
 	fi
 }
@@ -1869,6 +1880,7 @@ check-cluster-state() {
 	fi
 	echo
 
+	echo " Registry configuration:" $(check-registry-type printpath)
 
 	start-cluster-on-host-boot-status
 	if [ $? -eq 0 ]
@@ -1877,8 +1889,6 @@ check-cluster-state() {
 	else
 		echo " Start cluster on host boot: NO"
 	fi
-
-	echo " Registry configuration:" $(check-registry-type printpath)
 
 	# VERSION 1.1 - report cluster access
 	if [ $HAPROXYACCESS -eq 0 ]
@@ -1896,27 +1906,30 @@ check-cluster-state() {
 		sleep 1 # give the cpus a chance to cool down lol
 		echo " CPU temperature: $(sensors 2>/dev/null | grep "Package id 0" | cut -f2 -d: | sed -e "s/^  //g")"
 	fi
-
-	echo
-	echo " Additional useful info:"
-	echo " - See yakko command usage --------> ${YAKKOSCRIPTNAME} usage"
-	echo " - Make infrastructure changes ----> ${YAKKOSCRIPTNAME} infra <options>"
-	echo " - Make operational changes -------> ${YAKKOSCRIPTNAME} ops <options>"
-	echo " - Use OpenShift's 'oc' command ---> source ${YAKKODIRECTORY}/${OCPSETUPENV}"
-	echo " - Cluster command line login -----> ${YAKKODIRECTORY}/$LOGINCOMMANDFILE"
-	echo " - Basic cluster info web page ----> http://${YAKKOHOSTIP}:${WEBSERVERPORT}"
-	echo " - Edit cluster purpose + notes ---> /usr/bin/vim ${YAKKODIRECTORY}/cluster-notes"
-	if [ ${HAPROXYACCESS} -eq 0 -a ${USEYAKKODNSMASQ} == Y ]
-	then
-		echo " - Access cluster externally ------> Add [${YAKKOHOSTIP}] as a DNS server in your clients"
-		echo "   (This provides an alternative for when configuring DNS in your network is not possible)"
-	fi
-
-	if [ -n "${NOTSETKUBECONFIG}" ]
+ 
+	if [ "$SHOWADDITIONALINFO" == 0 ]
 	then
 		echo
-		print-in-colour orange " NOTE: You did not have KUBECONFIG set when you invoked YAKKO."     
-		print-in-colour orange "       Remember to use 'source ${OCPSETUPENV}' or adjust your environment accordingly!"
+		echo " Additional useful info:"
+		echo " - See yakko command usage --------> ${YAKKOSCRIPTNAME} usage"
+		echo " - Make infrastructure changes ----> ${YAKKOSCRIPTNAME} infra <options>"
+		echo " - Make operational changes -------> ${YAKKOSCRIPTNAME} ops <options>"
+		echo " - Use OpenShift's 'oc' command ---> source ${YAKKODIRECTORY}/${OCPSETUPENV}"
+		echo " - Cluster command line login -----> ${YAKKODIRECTORY}/$LOGINCOMMANDFILE"
+		echo " - Basic cluster info web page ----> http://${YAKKOHOSTIP}:${WEBSERVERPORT}"
+		echo " - Edit cluster purpose + notes ---> /usr/bin/vim ${YAKKODIRECTORY}/cluster-notes"
+		if [ ${HAPROXYACCESS} -eq 0 -a ${USEYAKKODNSMASQ} == Y ]
+		then
+			echo " - Access cluster externally ------> Add [${YAKKOHOSTIP}] as a DNS server in your clients"
+			echo "   (This provides an alternative for when configuring DNS in your network is not possible)"
+		fi
+	
+		if [ -n "${NOTSETKUBECONFIG}" ]
+		then
+			echo
+			print-in-colour orange " NOTE: You did not have KUBECONFIG set when you invoked YAKKO."     
+			print-in-colour orange "       Remember to use 'source ${OCPSETUPENV}' or adjust your environment accordingly!"
+		fi
 	fi
 }
 
@@ -1986,6 +1999,7 @@ build-ocp-node() {
 
 	if [ "$NODETYPE" == master -a "${MASTERNODECOUNT}" -eq 1 -a ${OCPINSTALLMINORVERSION} -ge 9 ]
 	then
+		echo "Building node with SNO topology, OCP 4.9+"
 		# This is a 'new' side case - this has always been optional until 4.18.18 where a hard check was 
 		# was implemented in the case of a single node openshift, where bootstrap MUST be bootstrapInPlace
 		# in install-config.yaml (see reference at top of yakko)
@@ -2031,6 +2045,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 
+		echo "Building node 3+X topology, OCP 4.6+ for Version 4.${OCPINSTALLMINORVERSION}"
 		# This change is also acknowdleged in the downloads stage, but it's easier to not keep track of...
 		if [ ${OCPINSTALLMINORVERSION} -ge 19 ]
 		then 
@@ -2059,6 +2074,7 @@ BASENETWORK=$BASENETWORK" \
 		BUILDOCPNODERESULT=$?
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 3 ]
 	then
+		echo "Building node 3+X topology, OCP 4.3+"
 		virt-install \
 			--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 			--vcpus ${NODEVCPUS} \
@@ -2075,6 +2091,7 @@ BASENETWORK=$BASENETWORK" \
 			--name ${NODEVMNAME}
 		BUILDOCPNODERESULT=$?
 	else
+		echo "Building node 3+X topology, OCP < 4.3"
 		virt-install \
 			--memory=${NODERAMSIZE},maxmemory=$((${NODERAMSIZE} + ${MAXMEMBALOONSIZE})) \
 			--vcpus ${NODEVCPUS} \
@@ -3057,6 +3074,15 @@ update-haproxy-access() {
 	sed -i "/HAPROXYACCESS/c\HAPROXYACCESS=${HAPROXYACCESS}" ${CLUSTERCONFIGFILE} &>/dev/null
 }
 
+update-cluster-version() {
+
+	CURRENTCLUSTERVERSION=$(${OCCOMMAND} get clusterversion -o jsonpath='{.items[].status.history[].version}' 2>/dev/null)
+	if [ "$OCPVERSION" -ne "$CURRENTCLUSTERVERSION" ]
+	then
+		sed -i "s/OCPVERSION=/OCPVERSION=$CURRENTCLUSTERVERSION/" $CLUSTERCONFIGFILE
+	fi
+}
+
 update-dnsmasq-config-file() {
 
 	# We set the state to the parameter passed and then adjust files accordingly
@@ -3364,7 +3390,7 @@ yakko-infra-operations() {
 
 	if [ "${OPTION}" == "startcluster" ]
 	then
-		#infrastartcluster
+		#infrastartcluster #startcluster
 
 		print-option-header infra "Start cluster [${CLUSTERFQDN}]"
 
@@ -3500,6 +3526,7 @@ BASENETWORK=$BASENETWORK"
 			else
 				echo "- Web console does not appear to be ready - may take a little longer"
 			fi
+			echo
 		fi
 	fi
 
@@ -4056,7 +4083,7 @@ EOFSYSTEMDFILE
 		# NEWNODELIST was populated during process-stage-build-ocp-workernodes
 
 		CHECKINTERVAL=15
-		ADDNODETIMEOUT=$((${ADDNODETIMEOUT} * ${WORKERNODECOUNT}))
+		THISADDNODETIMEOUT=$((${ADDNODETIMEOUT} * ${WORKERNODECOUNT}))
 
 		print-in-colour lightblue  "Waiting up to $(($ADDNODETIMEOUT /60)) minutes to complete the node addition(s) - (Time start: $(date +%H:%M%p))"
 		echo
@@ -4075,7 +4102,7 @@ EOFSYSTEMDFILE
 				sleep ${CHECKINTERVAL}
 
 				# We will timedown the success of this stage - hit 0 and bail out
-				ADDNODETIMEOUT=$((ADDNODETIMEOUT - CHECKINTERVAL))
+				THISADDNODETIMEOUT=$((THISADDNODETIMEOUT - CHECKINTERVAL))
 
 				if [ ${ADDNODETIMEOUT} -le 0 ]
 				then
@@ -7989,6 +8016,8 @@ process-stage-gatherclusterconfiguration() {
 						read OCPVERSION
 						if [ -d ${IMAGEREPO}/${OCPVERSION} ]
 						then
+							OCPINSTALLMINORVERSION=$(echo $OCPVERSION | cut -f2 -d.)
+							get-rhcos-dependency
 							break
 						else
 							echo "Image [${OCPVERSION}] is not a valid/existing image, choose another."
@@ -8011,9 +8040,7 @@ process-stage-gatherclusterconfiguration() {
 					do
 						echo -n  'Enter OCP version you require, e.g. "4.5.6": ' 
 						read OCPVERSION
-
 						check-if-openshift-version-is-valid 
-
 						[ $? -eq 0 ] && break
 					done
 		
@@ -8385,9 +8412,15 @@ process-stage-gatherclusterconfiguration() {
 		#
 		# This last one actually deletes the clusterconfig file and when this happens, yakko 
 		# no longer believes that a cluster exists so this must be done AFTER all stages are cleared
-		mv ${CLUSTERCONFIGFILE} ${CLUSTERCONFIGFILE}.old
-		echo "Existing configuration file has beed saved as ${CLUSTERCONFIGFILE}.old for reference"
-		echo "Cluster [${CLUSTERFQDN}] and associated configuration have been deleted."
+		if [ -n "${CLUSTERCONFIGFILE}" ]
+		then
+			mv ${CLUSTERCONFIGFILE} ${CLUSTERCONFIGFILE}.old &>/dev/null
+			echo "Existing configuration file has beed saved as ${CLUSTERCONFIGFILE}.old for reference"
+		fi
+		if [ "$CLUSTERFQDN" != "CLUSTERNAMENOTSET" ]
+		then
+			echo "Cluster [${CLUSTERFQDN}] and associated configuration have been deleted."
+		fi
 	}
 }
 
@@ -8513,11 +8546,10 @@ yakko-process-stages() {
 	process-stage-startocpbootstrap ${ACTION}
 	process-stage-reduceprometheusmemory ${ACTION}
 	process-stage-waitforocpinstalltocomplete ${ACTION}
+	process-stage-postinstall ${ACTION}
 
-	if [ "${ACTION}" == "progress" ]
+	if [ "${ACTION}" == "rollback" ]
 	then
-		process-stage-postinstall progress
-	else
 		process-stage-gatherclusterconfiguration rollback
 		check-if-yakko-running # This guy will delete any background yakkos if DELETECLUSTERMODE == 0
 	fi
