@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.01
-YAKKODATE=20250810.2149
+YAKKOVERSION=9.02
+YAKKODATE=20250822.1707
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -118,7 +118,7 @@ export TERM=${TERM:-xterm-256color}
 [ ${YAKKOHOSTOSNAME} == "fedora" ] && WGET="wget2" 
 
 # Cluster build progression variables - DO NOT CHANGE
-REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy lsof httpd firewalld bind-utils net-tools lshw ${WGET} podman lm_sensors"
+REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy lsof httpd firewalld bind-utils net-tools lshw ${WGET} podman "
 YAKKOSTAGE=0
 STAGEPROGRESS=0
 YAKKOBUILDTEMPLATETYPE=0  # 0 means "ask questions, don't use a template file"
@@ -134,7 +134,7 @@ YAKKOTEXTCOLOUR=brightblue  # Look and feel :)
 
 # YAKKO parameter options
 YAKKOINFRAOPTIONS=" startcluster / stopcluster / startonboot / snaptake / snaprestore / addnode / deletenode / nodelogs / sshtonode / changeaccess / updateservices / listresources / listclusters / purgedownloads / resizeram / describehw / nfsshare / installcomplete / deletecluster "
-YAKKOCLUSTEROPTIONS=" htpasswd / useradd / userdelete / mastersched / nodelabel / localregistry / nfsregistry / nfsmap / ingresscert / approvecsrs / emergency / yakkotest "
+YAKKOCLUSTEROPTIONS=" htpasswd / useradd / userdelete / mastersched / nodelabel / localregistry / nfsregistry / nfsmap / ingresscert / approvecsrs / changelogo / emergency / yakkotest "
 
 # Temporary files
 HTPASSWDFILE=/tmp/ocp-htpasswd.$$
@@ -327,12 +327,19 @@ generate-login-command-file() {
 change-console-logo() {
 
 	rm /tmp/yakko-custom-logo.png &>/dev/null
-	if [ ${OCPINSTALLMINORVERSION} -lt 19 ]
+
+	if [ -n "$1" ]
 	then
-		${WGET} -O /tmp/yakko-custom-logo.png  https://raw.githubusercontent.com/ozchamo/YAKKO/master/openshift-yakko-logo.png &>/dev/null
+		[ ! -r "$1" ] && cleanup-and-exit 1 orange "ERROR: file $LOGOFILE is invalid or cannot be opened."
+		cp "$1" /tmp/yakko-custom-logo.png
 	else
-		# OpenShift 4.19 changed the them and thus the colours of the logo
-		${WGET} -O /tmp/yakko-custom-logo.png  https://raw.githubusercontent.com/ozchamo/YAKKO/master/openshift-yakko-logo-4.19.png &>/dev/null
+		if [ ${OCPINSTALLMINORVERSION} -lt 19 ]
+		then
+			${WGET} -O /tmp/yakko-custom-logo.png  https://raw.githubusercontent.com/ozchamo/YAKKO/master/openshift-yakko-logo.png &>/dev/null
+		else
+			# OpenShift 4.19 changed the them and thus the colours of the logo
+			${WGET} -O /tmp/yakko-custom-logo.png  https://raw.githubusercontent.com/ozchamo/YAKKO/master/openshift-yakko-logo-4.19.png &>/dev/null
+		fi
 	fi
 
 	if [ $? -eq 0 ]
@@ -1904,7 +1911,9 @@ check-cluster-state() {
 	if [ -x "/usr/bin/sensors" ]
 	then
 		sleep 1 # give the cpus a chance to cool down lol
-		echo " CPU temperature: $(sensors 2>/dev/null | grep "Package id 0" | cut -f2 -d: | sed -e "s/^  //g")"
+		CPUTEMP=$(sensors 2>/dev/null | grep "Package id 0" | cut -f2 -d: | sed -e "s/^  //g")
+
+		[ -n "$CPUTEMP" ] && echo " CPU temperature: $(sensors 2>/dev/null | grep "Package id 0" | cut -f2 -d: | sed -e "s/^  //g")"
 	fi
  
 	if [ "$SHOWADDITIONALINFO" == 0 ]
@@ -2518,6 +2527,7 @@ check-cluster-power() {
 		if [ "$DOEXIT" == "exit" ]
 		then
 			get-cluster-configuration print
+			echo
 			cleanup-and-exit 1 orange " This cluster is currently SUSPENDED: run 'yakko startcluster'"
 		fi
 
@@ -2529,6 +2539,7 @@ check-cluster-power() {
 		if [ "$DOEXIT" == "exit" ]
 		then
 			get-cluster-configuration print
+			echo
 			cleanup-and-exit 1 orange " This cluster is currently SHUTDOWN: run 'yakko startcluster'"
 		fi
 
@@ -3427,6 +3438,7 @@ yakko-infra-operations() {
 			sleep 1
 			print-in-colour green "Cluster is now up"
 			echo - check state with 'oc get co'
+			cleanup-and-exit 0
 
 		else  # Cluster is shutdown
 			check-for-other-yakko-cluster-files
@@ -3526,7 +3538,6 @@ BASENETWORK=$BASENETWORK"
 			else
 				echo "- Web console does not appear to be ready - may take a little longer"
 			fi
-			echo
 		fi
 	fi
 
@@ -3680,7 +3691,7 @@ EOFSYSTEMDFILE
 			set-selinux-perms systemd $SYSTEMDFILE
 			set-selinux-perms exec ${YAKKODIRECTORY}/${YAKKOSCRIPTNAME}
 			systemctl daemon-reload
-			systemctl enable yakko
+			systemctl enable --now yakko 
 			if [ $? -eq 0 ]
 			then
 				print-in-colour green "Service yakko established successfully in /etc/systemd/system"
@@ -4932,6 +4943,7 @@ print-yakko-ops-operations-menu() {
 	echo "        - nfsregistry     ->  Enable an existing NFS share as registry (persistent)"
 	echo "        - nfsmap          ->  Map an existing NFS share to a namespace"
 	echo "        - ingresscert     ->  Install an existing wildcard certificate"
+	echo "        - changelogo      ->  Change the OpenShift Console logo"
 	echo "        - emergency       ->  Retrieve certain aspects of state from master node"
 	echo "        - yakkotest       ->  Deploy the 'yakkotest' app on your cluster, to test the lot!!"
 }
@@ -5774,6 +5786,33 @@ yakko-ops-operations() {
 			echo "There are no pending CSRs to approve"
 		fi
 	fi
+
+	if [ "${OPTION}" == "changelogo" ]
+	then
+		#opschangelogo
+
+		print-option-header ops "Change Console Logo"
+
+		echo "This option simplifies changing the OpenShift Console logo."
+		echo "Got too many clusters? This will help."
+		echo
+		echo "With no parameters, the OpenShift+YAKKO logo is restored."
+		echo "With a JPG, PNG or SVG image file as a parameter, that image is installed as the logo."
+		echo
+		echo "For themed configs, visit this page:"
+		echo "https://developers.redhat.com/articles/2025/07/25/enable-custom-logos-branding-openshift-web-console#adding_custom_logos_via_the_openshift_web_console"
+		echo
+		if [ -n "$1" ]
+		then
+			ask-user "Do you want to install $1 as the Console logo" Y
+		else
+			ask-user "Do you want to restore the OpenShift+YAKKO Console logo" Y
+		fi
+		[ $? -ne 0 ] && cleanup-and-exit 0 "No changes made to the logo"
+
+		change-console-logo $1
+	fi
+
 
 	if [ "${OPTION}" == "emergency" ]
 	then

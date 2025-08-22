@@ -10,7 +10,7 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 9.01 (20250810.2149)
+## CURRENT VERSION: 9.02 (20250822.1707)
 - Named it 9.0 because there is no guarantee it can be replaced in-place!
 - Tested on RHEL 9.6, RHEL 10 and Fedora 42
 - Tested with OpenShift 4.18 and 4.19 (seems to work all the way to 4.2!)
