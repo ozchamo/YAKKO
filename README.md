@@ -10,7 +10,7 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 9.02 (20250822.1707)
+## CURRENT VERSION: 9.03 (20251009.2340)
 - 9.02 - added option 'ops -> changelogo' to pimp your OpenShift console your way!
 - Named it 9.0 because there is no guarantee it can be replaced in-place
 - Tested on RHEL 9.6, RHEL 10 and Fedora 42

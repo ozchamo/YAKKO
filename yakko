@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.02
-YAKKODATE=20250822.1707
+YAKKOVERSION=9.03
+YAKKODATE=20251009.2340
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -701,7 +701,7 @@ check-for-error-and-exit() {
 	fi
 
 	# There is no error found
-	[ "$1" -eq 0 ] && return
+	[ "$1" == 0 ] && return
 
 	# Else... Doom!
 	echo
@@ -736,6 +736,14 @@ print-yakko-header() {
 		print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
 		echo
 	fi
+}
+
+populate-computer-manufacturer() {
+	MANUFACTURER="unknown"
+	cat /proc/cpuinfo | grep vendor_id | uniq | awk '{ print $3 }' | tr 'A-Z' 'a-z' | grep "intel" &>/dev/null
+	[ $? -eq 0 ] && MANUFACTURER=intel
+	cat /proc/cpuinfo | grep vendor_id | uniq | awk '{ print $3 }' | tr 'A-Z' 'a-z' | grep "amd" &>/dev/null
+	[ $? -eq 0 ] && MANUFACTURER=amd
 }
 
 check-if-package-is-installed() {
@@ -3222,19 +3230,35 @@ update-haproxy-config-file() {
 	echo "HAProxy restarted."
 }
 
-start-cluster-on-host-boot-status() {
-		# Returns 0 if cluster is setup for startup on host boot, 1 if it isn't.
-		if [ ! -e $SYSTEMDFILE ]
-		then
-			return 1
-		fi
+check-nested-virtualisation-enabled() {
+	# $1 = quiet silences all output
 
-		if [ ${YAKKODIRECTORY} == $(cat $SYSTEMDFILE | grep @ | cut -f2 -d@) ]
-		then
-			return 0
-		else
-			return 1
-		fi
+	[ "$1" != "quiet" ] && print-in-colour green  "CPU passthrough info:"
+	NESTEDVIRTSTATE="$(cat /sys/module/kvm_$MANUFACTURER/parameters/nested 2>/dev/null)"
+	if [ "$NESTEDVIRTSTATE" == Y -o "$NESTEDVIRTSTATE" == "1" ]
+	then
+		[ "$1" != "quiet" ] && echo "Nested Virtualization is ENABLED"
+		return 0
+	else
+		[ "$1" != "quiet" ] && echo "Nested Virtualization is DISABLED"
+		[ "$1" != "quiet" ] && echo "See https://docs.fedoraproject.org/en-US/quick-docs/using-nested-virtualization-in-kvm/"
+		return 1
+	fi
+}
+
+start-cluster-on-host-boot-status() {
+	# Returns 0 if cluster is setup for startup on host boot, 1 if it isn't.
+	if [ ! -e $SYSTEMDFILE ]
+	then
+		return 1
+	fi
+
+	if [ ${YAKKODIRECTORY} == $(cat $SYSTEMDFILE | grep @ | cut -f2 -d@) ]
+	then
+		return 0
+	else
+		return 1
+	fi
 }
 
 snap-inactive-cluster() {
@@ -3441,6 +3465,9 @@ yakko-infra-operations() {
 			cleanup-and-exit 0
 
 		else  # Cluster is shutdown
+			check-nested-virtualisation-enabled quiet
+			check-for-error-and-exit $? "NESTED VIRTUALISATION IS DISABLED!\n\nThis should not happen after YAKKO has been installed.\nCheck See https://docs.fedoraproject.org/en-US/quick-docs/using-nested-virtualization-in-kvm/\nPlease address before retrying"
+
 			check-for-other-yakko-cluster-files
 			get-yakko-host-ip update 
 			update-services start
@@ -3814,7 +3841,7 @@ EOFSYSTEMDFILE
 
 		# CHANGE YAKKOID REFERENCES
 		start-spinner " - Changing YAKKOID references in filenames/VMs"
-		for ORIGFILENAME in $(find -name \*${YAKKOID}\*)
+		for ORIGFILENAME in $(find $CLONEYAKKODIRECTORY -name \*${YAKKOID}\*)
 		do
 			CLONEFILENAME=$(echo $ORIGFILENAME | sed -E "s/${YAKKOID}/${CLONEYAKKOID}/")
 			mv $ORIGFILENAME $CLONEFILENAME
@@ -4630,7 +4657,7 @@ EOFSYSTEMDFILE
 			THISCLUSTERDIRECTORY=$(virsh desc ${EACHCLUSTER} | grep YAKKODIRECTORY | cut -f2 -d=)
 			THISCLUSTERID=${EACHCLUSTER##*.}  # see https://mywiki.wooledge.org/BashFAQ/100
 			THISCLUSTERBASENETWORK=$( virsh desc ${EACHCLUSTER} | grep BASENETWORK | cut -f2 -d=)
-			THISCLUSTERPURPOSE=$(cat $THISCLUSTERDIRECTORY/$CLUSTERNOTES | sed '/--/,$ d' | sed '/^ *$/d')
+			THISCLUSTERPURPOSE=$(cat $THISCLUSTERDIRECTORY/$CLUSTERNOTES 2>/dev/null | sed '/--/,$ d' | sed '/^ *$/d')
 			THISCLUSTERSTATE=$(virsh list --all | grep master-0 | grep ${THISCLUSTERID} | awk '{ print $3}')
 
 			case ${THISCLUSTERSTATE} in
@@ -4649,7 +4676,7 @@ EOFSYSTEMDFILE
 			echo "${YAKKONAME} ID:      " ${THISCLUSTERID}
 			echo "Cluster state: " ${PRINTCLUSTERSTATE}
 			echo "Directory:     " ${THISCLUSTERDIRECTORY}
-			echo "Purpose:       " ${THISCLUSTERPURPOSE}
+			[ -n "${THISCLUSTERPURPOSE}" ] && echo "Purpose:       " ${THISCLUSTERPURPOSE}
 			echo "Virt. Network: " ${THISCLUSTERBASENETWORK}.0
 			echo
 		done
@@ -4692,13 +4719,7 @@ EOFSYSTEMDFILE
 
 		print-in-colour green  "Computer info:"
 		lshw | sed -n "2,4p" | sed -e "s/^ \+//g"
-		MANUFACTURER="uknown"
-		cat /proc/cpuinfo | grep vendor_id | uniq | awk '{ print $3 }' | tr 'A-Z' 'a-z' | grep "intel" &>/dev/null
-		[ $? -eq 0 ] && MANUFACTURER=intel
-		cat /proc/cpuinfo | grep vendor_id | uniq | awk '{ print $3 }' | tr 'A-Z' 'a-z' | grep "amd" &>/dev/null
-		[ $? -eq 0 ] && MANUFACTURER=amd
-		
-		if [ $MANUFACTURER == "unknown" ]
+		if [ $MANUFACTURER == "unknown" ] # manufacturer is populater by populate-computer-manufacturer
 		then
 			print-in-colour red "CPU MANUFACTURER IS UNKNOWN"
 		else
@@ -4715,16 +4736,8 @@ EOFSYSTEMDFILE
 		lshw | grep -A 8 "\*-memory$" | sed "1d" | sed -e "s/^ \+//g" | grep -v bank
 		echo
 
-		print-in-colour green  "CPU passthrough info:"
-		NESTEDVIRTSTATE="$(cat /sys/module/kvm_$MANUFACTURER/parameters/nested)"
-		if [ "$NESTEDVIRTSTATE" == Y -o "$NESTEDVIRTSTATE" == "1" ]
-		then
-			echo "Nested Virtualization is ENABLED"
-		else
-			echo "Nested Virtualization is DISABLED"
-			echo "See https://docs.fedoraproject.org/en-US/quick-docs/using-nested-virtualization-in-kvm/"
-		fi
-		echo
+		check-nested-virtualisation-enabled
+		echo  
 
 		print-in-colour green  "GPU info:"
 		lspci -n -n -k | grep -A 2 -e VGA -e 3D
@@ -8601,6 +8614,9 @@ yakko-process-stages() {
 ##########  If this were a different programming language, you would call this a "main()".... ########
 ######################################################################################################
 
+# if the user passed a parameter, let's capture it here... it could be "infra" or "ops"
+YAKKOCALLOPTION=$1
+
 # This is a unique identifier, used to avoid CLUSTERFQDN conflicts for when two or more clusters reuse the same CLUSTERFQDN
 YAKKOID=$(ls -id $YAKKODIRECTORY | awk '{print $1}') 
 
@@ -8622,14 +8638,9 @@ then
 fi
 
 set-selinux-state  # Identify this from the get go
+populate-computer-manufacturer
 
-
-if [ "$1" == "getlatest" ]
-then
-	getlatest
-fi
-
-if [ "$1" == "version" ]
+if [ "$YAKKOCALLOPTION" == "version" ]
 then
 	echo
 	echo "${YAKKONAME} version::${YAKKOVERSION} (${YAKKODATE})"
@@ -8649,20 +8660,24 @@ then
 	cleanup-and-exit 1
 fi
 
-if [ "$1" == "backup" ]
+if [ "$YAKKOCALLOPTION" == "getlatest" ]
+then
+	getlatest
+fi
+
+if [ "$YAKKOCALLOPTION" == "backup" ]
 then
 	# This is action 0, the developer wants to make a backup
 	# There will be no cluster built, nothing
 	yakko-backup $*
 fi
 
-if [ "$1" == describehw -o "$2" == describehw ]
+if [ "$YAKKOCALLOPTION" == describehw -o "$2" == describehw ]
 then
 	yakko-infra-operations describehw
 fi
 
-
-if [ "$1" == "runcommand" ]
+if [ "$YAKKOCALLOPTION" == "runcommand" ]
 then
 	# This is to test functions in yakko from outside. The world doesn't need to know.
 	
@@ -8681,7 +8696,12 @@ fi
 	
 print-yakko-header
 
-if [ "$1" == "usage" -o "$1" == "help" ]
+if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == listclusters ) || "${YAKKOCALLOPTION}" == listclusters ]]
+then
+	yakko-infra-operations listclusters
+fi
+
+if [ "$YAKKOCALLOPTION" == "usage" -o "$YAKKOCALLOPTION" == "help" ]
 then
 	#usage
 	print-in-colour ${YAKKOTEXTCOLOUR}  "When NO CLUSTER is configured you can call: "
@@ -8708,7 +8728,7 @@ then
 	cleanup-and-exit 0
 fi
 
-if [ -e "${YAKKODIRECTORY}/.yakkohome" -a ! -w "${YAKKODIRECTORY}" -a "$1" != "addcluster" ]
+if [ -e "${YAKKODIRECTORY}/.yakkohome" -a ! -w "${YAKKODIRECTORY}" -a "$YAKKOCALLOPTION" != "addcluster" ]
 then
 	# This is so I can share with other computers safely
 	echo
@@ -8897,7 +8917,7 @@ fi
 
 # Now that we know where we stand, we can offer a new YAKKO landing place for a second, third etc cluster
 cd ${YAKKODIRECTORY} &>/dev/null # Just change to the directory of action from hereon
-if [ "$1" == addcluster ]
+if [ "$YAKKOCALLOPTION" == addcluster ]
 then
 	# New with ~2.5?
 	echo "To add a new cluster, you will need to run ${YAKKOSCRIPTNAME} from a new directory altogether."
@@ -8962,26 +8982,11 @@ then
 	cleanup-and-exit 0
 fi
 
-
-# We load BUILD DEFAULTS whether they exist... or not.
-#source ${CLUSTERBUILDDEFAULTS} &>/dev/null
-
-# HERE IT ALL BEGINS
-# This is the last code group - a cluster config file exists or it doesn't
-
-# if the user passed a parameter, let's capture it here... it could be "infra" or "ops"
-YAKKOCALLOPTION=$1
-
 if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == purgedownloads ) || "${YAKKOCALLOPTION}" == purgedownloads ]]
 then
 	yakko-infra-operations purgedownloads
 fi
 	
-if [[ ( "${YAKKOCALLOPTION}" == infra && "$2" == listclusters ) || "${YAKKOCALLOPTION}" == listclusters ]]
-then
-	yakko-infra-operations listclusters
-fi
-
 if [ ! -r "${CLUSTERCONFIGFILE}" ]
 then
 	# We check if the user is already messing with another cluster
@@ -9023,7 +9028,7 @@ then
 			#buildclusterfromtemplate
 			YAKKOBUILDTEMPLATETYPE=2
 			shift
-			YAKKOTEMPLATE=$1 # It's $2 at this point - a number signifies all defauls and build number of Masters
+			YAKKOTEMPLATE=$1 # It's $2 at this point - a number signifies all defaults and build number of Masters
 			if [ -z "$YAKKOTEMPLATE" ]
 			then
 				print-in-colour ${YAKKOTEXTCOLOUR} "USAGE: yakko buildclusterfromtemplate <filename or URL>"
