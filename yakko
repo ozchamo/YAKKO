@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.03
-YAKKODATE=20251009.2340
+YAKKOVERSION=9.04
+YAKKODATE=20251023.1812
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -3558,7 +3558,7 @@ BASENETWORK=$BASENETWORK"
 			print-in-colour green "Cluster is now up - time: $(date +%H:%M%p)"
 			echo "- API endpoint https://api.${CLUSTERFQDN}:6443 is now available"
 
-			curl -ks "https://console-openshift-console.apps.test.pichus.net" | grep loginURL &>/dev/null
+			curl -ks "https://console-openshift-console.apps.${CLUSTERFQDN}" | grep loginURL &>/dev/null
 			if [ $? -eq 0 ]
 			then
 				echo "- Web console https://console-openshift-console.apps.${CLUSTERFQDN} is now available"
@@ -7158,7 +7158,7 @@ process-stage-build-bootstrapinplace-master() {
 
 		advance-stage-progression "KVM bootstrap-in-place Host Configuration" && return
 		
-		SNO_BOOTSTRAP_ISO_URL=$(${OCPINSTALLSOURCE}/openshift-install coreos print-stream-json | grep location | grep $OCPPLATFORM | grep iso | cut -d\" -f4)
+		SNO_BOOTSTRAP_ISO_URL=$(${OCPINSTALLSOURCE}/openshift-install coreos print-stream-json | jq | grep location | grep $OCPPLATFORM | grep iso | cut -d\" -f4)
 		if [ ! -e ${CLUSTERSETUPDIR}/rhcos-live.iso ]
 		then
 			curl -L $SNO_BOOTSTRAP_ISO_URL -o ${CLUSTERSETUPDIR}/rhcos-live.iso
