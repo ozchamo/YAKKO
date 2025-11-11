@@ -10,7 +10,13 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 9.04 (20251023.1812)
+## CURRENT VERSION: 9.10 (20251111.2225)
+- PROXY!!! Added a new question and install option: built-in logic for supporting servers behind a proxy
+- Tested on RHEL 10 and Fedora 43
+- Tested with 4.20 
+- Little bug fixes
+
+And slightly earlier...
 - 9.02 - added option 'ops -> changelogo' to pimp your OpenShift console your way!
 - Named it 9.0 because there is no guarantee it can be replaced in-place
 - Tested on RHEL 9.6, RHEL 10 and Fedora 42
@@ -99,14 +105,13 @@ It is not a management tool for OpenShift. It has a small overlay of features to
 - Access to the internet
 - RHEL/Fedora as the base installed operating system ("Server with GUI" is convenient, and then YAKKO gives you a working cluster)
 - Ports 80 and 443 available (to pass through to your applications in OpenShift)
-- 24GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB.
-- 32GB+ RAM for a 1 master + 1 worker cluster
-- 48GB+ for multi-node clusters (3 master compact cluster)
-- 64GB+ for full-HA clusters (3 masters, 2 workers - more than 2 and you may need more memory)
+- OpenShift is RAM hungry, so your results may vary - the below are bare minimums:
+    - 24GB+ RAM for a single node cluster (good luck though and note that your ability to run apps will be impaired, recommended is 32GB.
+    - 48GB+ for multi-node clusters (3 master compact cluster)
+    - 64GB+ for full-HA clusters (3 masters, 2 workers - more than 2 and you may need more memory)
 - 2.5GB of disk space for the install files (YAKKO will accumulate older OpenShift versions so keep an eye on the "images" directory within the directory where it resides)
 - SSD class storage with capacity as follows:
-    - 3 masters require 120GB EACH
-    - worker nodes require additional 120GB each
+    - 120GB per node (masters or workers) - a typical 3+2 cluster would require 600GB, but as VMs are sparse, you can get away with less
     - you can tweak the disk sizes if you must - edit YAKKO and look for MASTERDISKSIZE and WORKERDISKSIZE OR use a template (see 'yakko buildfromtemplate')
     - the above are the published requirements, in reality ~80GB per node should be sufficient
 - For older versions of OpenShift, YAKKO will not adjust these values down. They are in tune with the latest version unless you change them or use a template
@@ -136,11 +141,14 @@ When NO CLUSTER is configured you can call:
 
 ---
 ## HOW TO - INSTALL or "DAY 1"
+### ➜ Watch YAKKO 9.10 build a 1m+2w Cluster (below)
+#### (Most bells and whistles: using a proxy server, taking a snapshot at the end, and running a post-cluster-install script)
+[![asciicast](https://asciinema.org/a/755136.svg)](https://asciinema.org/a/755136)
 #### ➜ [Watch YAKKO 8.0 build a 3m+2w Cluster](https://asciinema.org/a/bMdXbL8o4DLCJUFLAjAo9RvMW)
 #### ➜ [Watch (an earlier vesion of) YAKKO in action building OpenShift (video with voiceover)](https://youtu.be/hLsUp7dwxdQ)
 #### STEPS
 1) Get the 'yakko' script: 
-   - You can clone the repo (ideally on /) OR  
+   - You can clone the repo (ideally on /tmp) OR  
    - download it from https://github.com/ozchamo/YAKKO/raw/master/yakko  
 2) Run 'yakko' as root (always!) - e.g. `[root@ocphost]# ~/Downloads/yakko`
 3) Choose a destination home directory for YAKKO - **usually /YAKKO** - you will be asked to re-run from there. 
@@ -148,25 +156,24 @@ When NO CLUSTER is configured you can call:
    - cd /YAKKO   # (if this is where you installed it)
    - ./yakko     # (to run it from the directory you're in. Surely you knew this ;)
 4) 'yakko' will start the OpenShift install process when there is no cluster defined, so no further parameters are necessary
-5) Follow instructions, my suggestion is that you run it manually until you get the hang of it
-6) Once you get the flow, it can build a cluster AUTOMATICALLY. I've built many in one week
-7) Depending on your hardware and desired cluster size you can have a cluster up and running in 30-50 minutes
-8) Until there is no operational cluster, YAKKO will keep asking you to continue the install from where you left off
-9) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
+5) Follow instructions, let it run 'AUTOMATICALLY' - you can amend mistakes on the go
+6) Depending on your hardware and desired cluster size you can have a cluster up and running in 30-50 minutes
+7) Until there is no operational cluster, YAKKO will keep asking you to continue the install from where you left off
+8) Once a cluster is operational, YAKKO reports something like this, anytime you run it without parameters:
 
 ```
 __________________________________________________________________________
 
- YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 8.00)
+ YAKKO: Yet Another KVM Konfigurator for Openshift (Ver. 9.10)
 __________________________________________________________________________
 
  CLUSTER: rectest.home  (Built: 13-Jun-2024@22:41:36)
  YAKKOID: 9848
- VERSION: 4.15.17
+ VERSION: 4.20.2
  @REDHAT: https://console.redhat.com/openshift/details/3c45c15e-1e0e-4e0a-a080-9dcb1daeaa41
- SUBNET:  192.168.141.0
- CERTEXP: Fri 14 Jun 2024 21:54:25 AEST
- PURPOSE: This cluster is being built to show ver 8.0
+ SUBNET:  192.168.140.0
+ CERTEXP: Tue 11 Nov 2025 21:54:25 AEST
+ PURPOSE: This cluster is being built to show ver 9.10
  
                state
  Web Console:  [ ✔ ]  https://console-openshift-console.apps.rectest.home
@@ -209,7 +216,7 @@ __________________________________________________________________________
  CLUSTER: mycluster.localdomain  (Built: 07-Jul-2025@16:38:04)
  YAKKOID: 689229
  VERSION: 4.19.2
- @REDHAT: https://console.redhat.com/openshift/details/4cf8eb00-bd85-459c-b905-9b5b68a5dc60
+ @REDHAT: https://console.redhat.com/openshift/details/4cf8eb10-b185-439c-b905-9b5b68a5dc60
  SUBNET:  192.168.141.0
  CERTEXP: Tue 08 Jul 2025 16:08:29 AEST
  PURPOSE: test
@@ -382,6 +389,24 @@ Every system is different and you may find that at some point in your life, you 
 
 ---
 ## LOOKING FOR OLDER "WHAT'S NEW(s)"?
+
+## YAKKO 9.00-9.04
+- 9.02 - added option 'ops -> changelogo' to pimp your OpenShift console your way!
+- Named it 9.0 because there is no guarantee it can be replaced in-place
+- Tested on RHEL 9.6, RHEL 10 and Fedora 42
+- Tested with OpenShift 4.18 and 4.19 (seems to work all the way to 4.2!)
+- Looking much more refined!
+- Revamped snapshots, you can take snapshots with active and inactive clusters, so not experimental anymore!
+- Added 'startonboot' to 'infra' options - which will enable start-up of the cluster on system boot
+- Updated SNO build process as a new stringent check came into place with 4.18.17
+  All single master clusters (SNO or one master + many workers now build with bootrstrap in place)
+- Improved the 'yakko ops emergency' feature - added a "reboot node" option
+- Added system info to the regular yakko report (system temperature and RAM available)
+- Added GPU report on 'yakko infra describehw'
+- General code improvement and cleanup:
+    - Eliminated code for building clusters using the agent based installer (sorry)
+    - Eliminated code that would have allowed Mirrored installs (was never used)
+    - Deleted unused code blocks that had been commented out over time
 
 ## YAKKO 8.1
 - Tested new versions of OSs (RHEL 9.5/Fedora 41) and OCP (4.17) - Christmas present check!

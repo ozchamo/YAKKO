@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.04
-YAKKODATE=20251023.1812
+YAKKOVERSION=9.10
+YAKKODATE=20251111.2225
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -20,7 +20,7 @@ YAKKODATE=20251023.1812
 # https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/installing_on_any_platform/installing-platform-agnostic
 #
 # SNO:
-# https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/installing_on_a_single_node/preparing-to-install-sno
+# https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_a_single_node/preparing-to-install-sno
 #
 # SNO BOOTSTRAP IN PLACE MANUAL BUILD >= 4.18.17
 # https://issues.redhat.com/browse/OCPBUGS-56863
@@ -34,7 +34,7 @@ YAKKODIRECTORY=$(dirname $(realpath $0))
 #########################################################################
 
 # TESTED PLATFORMS FOR THIS VERSION OF YAKKO - this will be checked always on install
-TESTEDPLATFORMS="rhel 9.6, rhel 10, fedora 42"
+TESTEDPLATFORMS="rhel 10, fedora 43"
 
 #########################################################################
 ## START: USER CONFIGURABLE PARAMETERS - you can also change through the use of a template
@@ -74,6 +74,7 @@ USEYAKKODNSMASQ=Y          # Choose to use your own name servers only or have YA
 WEBSERVERPORT=8086         # This is the webserver that YAKKO uses for provisioning and for further info
 HAPROXYACCESS=0            # We default OPEN access through the proxy, subject to change later
 PROXYADDRESS=1             # So that the overall "proxy" to the cluster is BASENETWORK.PROXY e.g. 192.168.140.1
+CORPORATEPROXY=            # YAKKO 9.x onwards - observing CORPORATEPROXY for PROXY based installs
 VNCPORT=5920               # We'll leave the firt few ports open for traditional VNC uses
 SDNTYPE=OVNKubernetes      # Just in case... it can also be: OpenShiftSDN
 SNAPCLUSTERONINSTALL=N     # 8.0 - we can snap a cluster, offer the option on fresh install
@@ -86,15 +87,16 @@ COREMACADDRESS=52:54:00:4a # This is the MAC address prefix for all node VM MACs
 ## this number as 52:54:00:4a:66 but now the last hex number will be the 3 network digit i.e. 140 which is "8c"
 
 # File and directory variables used throughout
-CLUSTERDOMAIN=localdomain                  # The default domain name if no other is offered
-LOGINCOMMANDFILE=cluster-login             # Yakko leaves a login file behind when done!
-CLUSTERNOTES=cluster-notes                 # Where YAKKO keeps your notes about the cluster
-CLUSTERPOSTINSTALL=cluster-post-install    # The default file to run for post-install tasks
-OCPSETUPENV=ocp-setup-env                  # Default commands to setup your KUBECONFIG and oc binary
-CLUSTERSETUPDIR=${YAKKODIRECTORY}/install  # All install assets will live here
-OCPVMDIR=${YAKKODIRECTORY}/cluster-vms     # This is where node VMs will be offered to reside
-                                           # With default libvirt it's /var/lib/libvirt/images
-CLUSTERISCLONEFILE=.cluster-is-clone       # EXPERIMENTAL
+CLUSTERDOMAIN=localdomain                              # The default domain name if no other is offered
+LOGINCOMMANDFILE=cluster-login                         # Yakko leaves a login file behind when done!
+CLUSTERNOTES=cluster-notes                             # Where YAKKO keeps your notes about the cluster
+CLUSTERPOSTINSTALL=cluster-post-install                # The default file to run for post-install tasks
+OCPSETUPENV=ocp-setup-env                              # Default commands to setup your KUBECONFIG and oc binary
+CLUSTERSETUPDIR=${YAKKODIRECTORY}/install              # All install assets will live here
+OCPVMDIR=${YAKKODIRECTORY}/infra-vms                 # This is where node VMs will be offered to reside
+                                                       # With default libvirt it's /var/lib/libvirt/images
+CLUSTERISCLONEFILE=${YAKKODIRECTORY}/.cluster-is-clone # EXPERIMENTAL
+CORPORATEPROXYFILE=${YAKKODIRECTORY}/.proxyconfig      # Corporate proxy file configuration
 
 #########################################################################
 ## END: USER CONFIGURABLE PARAMETERS
@@ -118,7 +120,7 @@ export TERM=${TERM:-xterm-256color}
 [ ${YAKKOHOSTOSNAME} == "fedora" ] && WGET="wget2" 
 
 # Cluster build progression variables - DO NOT CHANGE
-REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy lsof httpd firewalld bind-utils net-tools lshw ${WGET} podman "
+REQUIREDPACKAGES="libvirt virt-install qemu-kvm virt-top haproxy lsof httpd firewalld bind-utils net-tools lshw ${WGET} podman ipcalc "
 YAKKOSTAGE=0
 STAGEPROGRESS=0
 YAKKOBUILDTEMPLATETYPE=0  # 0 means "ask questions, don't use a template file"
@@ -183,6 +185,7 @@ populate-cluster-config-file() {
 		echo "OCPINSTALLVERSION=${OCPVERSION}" 
 		echo "OCPINSTALLMINORVERSION=${OCPINSTALLMINORVERSION}"
 		echo "OCPDOWNLOADIMAGES=${OCPDOWNLOADIMAGES}"
+		echo "OCPVMDIR=${OCPVMDIR}"
 		echo "OCPVMDISKDIR=${OCPVMDISKDIR}"
 		echo "OCPINSTALLSOURCE=$OCPINSTALLSOURCE" 
 		echo "NETWORKXML=$CLUSTERSETUPDIR/${NETWORKNAME}.xml"
@@ -192,6 +195,7 @@ populate-cluster-config-file() {
 		echo "BUILTWITHYAKKOVERSION=${YAKKOVERSION}"
 		echo "NOTICEYAKKOVERSION=${YAKKOVERSION}"
 		echo "YAKKOHOSTIP=${YAKKOHOSTIP}"
+        echo "YAKKOMAINHOSTPORT=${YAKKOMAINHOSTPORT}"
 		echo "VNCPORT=${VNCPORT}"
 		echo "HAPROXYACCESS=${HAPROXYACCESS}"
 		echo "SYSTEMSTUBFILE_DNSMASQ=${SYSTEMSTUBFILE_DNSMASQ}"
@@ -206,6 +210,8 @@ populate-cluster-config-file() {
 		echo "WEBSERVERPORT=${WEBSERVERPORT}"
 		echo "LOGINFILEHASPASSWORD=0"  
 		echo "SHOWADDITIONALINFO=0 # change to 1 to show less status info when calling 'yakko'"
+		echo "CORPORATEPROXY=${CORPORATEPROXY}" 
+		echo "CORPORATENOPROXY=${CORPORATENOPROXY}"
 
 		# These exist in lastclusterconfig too, but resizing will change it here only
 		echo "MASTERNODECOUNT=${MASTERNODECOUNT}"
@@ -617,6 +623,7 @@ print-question-separator() {
 	tput bold
 	print-in-colour lightblue "[$((QUESTIONNUM++))/${QUESTIONSTOTAL}] $*:" 
 	tput sgr0
+	((LOOPQUESTIONCOUNTER++)) # this is to count questions in loops. The loops should reset it if necessary.
 }
 
 print-question-skip() {
@@ -2062,7 +2069,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 
-		echo "Building node 3+X topology, OCP 4.6+ for Version 4.${OCPINSTALLMINORVERSION}"
+		echo "Building node 3+X topology, OCP 4.6+"
 		# This change is also acknowdleged in the downloads stage, but it's easier to not keep track of...
 		if [ ${OCPINSTALLMINORVERSION} -ge 19 ]
 		then 
@@ -2520,7 +2527,7 @@ check-cluster-power() {
 
 	DOEXIT=$1  #blank or "exit"
 
-	MASTERNODECOUNT=$(virsh list --all | grep "master-" | grep -c ${YAKKOID}) # This value should exist in .lastclusterbuild, but nevertheless
+	MASTERNODECOUNT=$(virsh list --all | grep "master-" | grep -c ${YAKKOID}) # This value should exist in $LASTBUILDCONFIG, but nevertheless
 	if [ "${MASTERNODECOUNT}" -eq 0 ]
 	then
 		print-in-colour red "ERROR: Something went wrong, there are no masters detected! (see virsh list --all)"
@@ -3478,7 +3485,7 @@ yakko-infra-operations() {
 	
 			for NODENAME in ${NODELIST}
 			do
-				#virsh setmaxmem ${NODENAME} ${MAXMEMBALOONSIZE}M &>/dev/null
+				# virsh setmaxmem ${NODENAME} ${MAXMEMBALOONSIZE}M &>/dev/null
 				echo "Starting up: ${NODENAME}"
 				NODESTATE=$(virsh dominfo ${NODENAME} | grep State: | awk '{print $2}')
 				if [ ${NODESTATE} == paused ]
@@ -7049,6 +7056,10 @@ process-stage-generateocpinstallerconfig() {
 				echo "fips: false "
 				echo "pullSecret: '${PULLSECRET}' "
 				echo "sshKey: '${SSHPUBKEY}'"
+				if [ -n "${CORPORATEPROXY}" ]
+				then
+					cat ${CORPORATEPROXYFILE} 
+				fi
 				# this vestige is a reminder of when YAKKO gave disconnected a go
 				if [ -n "${MIRRORSERVER}" ]
 				then
@@ -7162,17 +7173,21 @@ process-stage-build-bootstrapinplace-master() {
 		if [ ! -e ${CLUSTERSETUPDIR}/rhcos-live.iso ]
 		then
 			curl -L $SNO_BOOTSTRAP_ISO_URL -o ${CLUSTERSETUPDIR}/rhcos-live.iso
-			check-for-error-and-exit $? "Could not download SNO bootrap in-place ISO from $SNO_BOOTSTRAP_ISO_URL"
+			check-for-error-and-exit $? "Could not download SNO bootstrap in-place ISO from $SNO_BOOTSTRAP_ISO_URL"
 		fi
 
 		${OCPINSTALLSOURCE}/openshift-install --dir=${CLUSTERSETUPDIR} create single-node-ignition-config
 
 		# This embedds the ign file into the rhcos-live-embed.iso
-		# build-ocp-node for master will detect that it's a single master this is causedby 4.18.17 onwards)
+		# build-ocp-node for master will detect that it's a single master - this is enforced 4.18.17 onwards)
 		podman run --privileged --pull always --rm \
 	        -v /dev:/dev -v /run/udev:/run/udev -v ${CLUSTERSETUPDIR}:/data \
         	-w /data quay.io/coreos/coreos-installer:release \
   		iso ignition embed -fi bootstrap-in-place-for-live-iso.ign rhcos-live.iso -o rhcos-live-embed.iso
+
+		# Since this is bootstrap in place, we update references to BOOTSTRAPIP to be MASTER0IP
+		BOOTSTRAPIP=$MASTER0IP
+		sed -i "/BOOTSTRAPIP=/c\BOOTSTRAPIP=${BOOTSTRAPIP}" ${CLUSTERCONFIGFILE}
 	}
 
 	[ $1 == "rollback" ] && {
@@ -7407,13 +7422,11 @@ process-stage-startocpbootstrap() {
 
 			if [ $OCPINSTALLCODE -ne 0 ]
 			then
-				check-system-core-count "NOTE: " # We warn the user if his system is underpowered and use this below
+				check-system-core-count "NOTE: " # We warn the user if his system is underpowered and try one more time
 				if [ $? -eq 1 ] 
-				then
+				then 
 					print-in-colour green "YAKKO will attempt the bootstrap wait one more time"
-
 					check-if-all-cluster-nodes-up
-
 					echo
 					$OCPINSTALLSOURCE/openshift-install wait-for bootstrap-complete --dir=$CLUSTERSETUPDIR --log-level "${OCPINSTLOGLEVEL}"
 					OCPINSTALLCODE=$?
@@ -7428,18 +7441,20 @@ process-stage-startocpbootstrap() {
 				print-in-blink "ERROR: The bootstrap process has not completed successfully. "
 				
 				check-if-all-cluster-nodes-up 
-				if [ $? -eq 0 ]  
-				then
-					print-in-colour white "This process downloads a lot of images from quay.io and can take a long time."
-				fi
+				[ $? -eq 0 ] &&  print-in-colour white "This process downloads a lot of images from quay.io and can take a long time."
 
 				echo
 				echo    "Press <ENTER> to re-issue this stage (wait-for bootstrap-complete) and give it some more time, OR... "
 				echo -n "Press <CTRL-C> to abort this install and examine then rerun install and return to this point"
 				read -p ""
 				$OCPINSTALLSOURCE/openshift-install wait-for bootstrap-complete --dir=$CLUSTERSETUPDIR --log-level "${OCPINSTLOGLEVEL}"
+				OCPINSTALLCODE=$?
 				echo
-			else
+			fi
+
+			csr-approval stop
+			if [ $OCPINSTALLCODE -eq 0 ]
+			then
 				#the wait-for bootstrap-complete was successful
 				virsh list | grep bootstrap.${CLUSTERFQDN}.${YAKKOID} &>/dev/null
 				if [ $? -eq 0 ]
@@ -7448,8 +7463,14 @@ process-stage-startocpbootstrap() {
 					sleep 3
 					delete-kvm-machine bootstrap.${CLUSTERFQDN}.${YAKKOID}
 				fi
+			else
+				echo
+				echo "Installation may complete in the background, but it is unlikely to succeed."
+				echo "You should check your system and retry from the beginning."
+				echo "Start by deleting all:  yakko infra deletecluster force"
+				echo
+				cleanup-and-exit 1 red "ERROR: The bootstrap process has not completed successfully."
 			fi
-			csr-approval stop
 		}
 	}
 
@@ -7607,6 +7628,8 @@ process-stage-waitforocpinstalltocomplete() {
 					echo "CLUSTERPOSTINSTALL=${CLUSTERPOSTINSTALL}"
 					echo "SNAPCLUSTERONINSTALL=${SNAPCLUSTERONINSTALL}"
 					echo "BASENETWORK=${BASENETWORK}"
+					echo "CORPORATEPROXY=${CORPORATEPROXY}"
+					echo "CORPORATENOPROXY=${CORPORATENOPROXY}"
 
 				} > ${LASTBUILDCONFIG}
 
@@ -7699,7 +7722,7 @@ process-stage-gatherclusterconfiguration() {
 
 			if [ "${YAKKOBUILDTEMPLATETYPE}" -eq 1 ]
 			then
-				# YAKKOTEMPLATE was already set LASTBUIDLCONFIG when 'rebuildcluster' parameter was detected
+				# YAKKOTEMPLATE was already set LASTBUILDCONFIG when 'rebuildcluster' parameter was detected
 				print-in-colour white "REBUILD requested, ${YAKKONAME} will attempt repeating the last known successful cluster configuration"
 				source ${YAKKOTEMPLATE} 
 			fi
@@ -7732,7 +7755,6 @@ process-stage-gatherclusterconfiguration() {
 						cleanup-and-exit 1 orange "ERROR: Could not open template file [${YAKKOTEMPLATE}]"
 					fi
 				fi
-
 				source ${YAKKOTEMPLATE} 
 			fi
 
@@ -7753,6 +7775,14 @@ process-stage-gatherclusterconfiguration() {
 			fi
 			
 			# VALIDATE TEMPLATE BEGIN: We check that all needed values are present
+
+			if [ -n "${CORPORATEPROXY}" ]
+			then
+				print-in-colour blue "Proxy configuration found, applying to YAKKO."
+				export http_proxy=${CORPORATEPROXY}
+				export https_proxy=${CORPORATEPROXY}
+				export no_proxy="$no_proxy,$CORPORATENOPROXY"
+			fi
 
 			[ -z "$CLUSTERNAME" ] && cleanup-and-exit 1 red "ERROR: CLUSTERNAME needs to be set."
 			[ -z "$CLUSTERDOMAIN" ] && cleanup-and-exit 1 red "ERROR: CLUSTERDOMAIN needs to be set."
@@ -7984,6 +8014,104 @@ process-stage-gatherclusterconfiguration() {
 				echo "- An A or CNAME record for api.${CLUSTERNAME}.${CLUSTERDOMAIN}"
 				echo "- a wildcard for apps.${CLUSTERNAME}.${CLUSTERDOMAIN} pointing to ${YAKKOHOSTIP}"
 			fi	
+
+			### QUESTION: Proxy server config?
+			print-question-separator PROXY SERVER 
+
+			if [ -n "$http_proxy" -o -n "$https_proxy" -o -n "$HTTP_PROXY" -o -n "$HTTPS_PROXy" ]
+			then 
+				if [ -n "$http_proxy" ]
+				then
+					CORPORATEPROXY="$http_proxy"
+				elif [ -n "$HTTP_PROXY" ]
+				then
+					CORPORATEPROXY="$HTTP_PROXY"
+				elif [ -n "$https_proxy" ]
+				then
+					CORPORATEPROXY="$https_proxy"
+				elif [ -n "$HTTPS_PROXY" ]
+				then
+					CORPORATEPROXY="$HTTPS_PROXY"
+				fi
+			fi
+
+			if [ -n "$CORPORATEPROXY" ]
+			then
+				ask-user "A proxy configuration was found. Setup proxy server for cluster config/operation" Y
+			else
+				ask-user "No proxy configuration was found. Setup proxy server for cluster config/operation" N
+			fi
+			REQUESTPROXY=$? # 0 is yes
+			
+			if [ "$REQUESTPROXY" -eq 0 ]
+			then
+				# A Proxy definition was detected
+				echo "$CORPORATEPROXY" | grep http &>/dev/null
+				if [ $? -eq 0 ]
+				then
+					ask-user "Use [$CORPORATEPROXY] as the proxy definition" Y
+					if [ $? -eq 0 ]
+					then
+						REQUESTPROXY=1
+					fi
+				elif [ -n "$CORPORATEPROXY" ]
+				then
+					ask-user "Use [http://$CORPORATEPROXY] as the proxy definition" Y
+					if [ $? -eq 0 ]
+					then
+						CORPORATEPROXY=http://${CORPORATEPROXY}
+						REQUESTPROXY=1
+					fi
+				fi
+
+				if [ "$REQUESTPROXY" -eq 0 ]
+				then
+					while true
+					do
+						echo -n "Enter the URI for your proxy server (e.g. URL:  http://host:port): "
+						read CORPORATEPROXY
+						echo "$CORPORATEPROXY" | grep http &>/dev/null
+						if [ $? -ne 0 ]
+						then
+							echo "Invalid proxy definition URL format"
+						else
+							break
+						fi
+					done
+				fi
+	
+				#YAKKOMAINHOSTPORT has the network port the server uses...
+				YAKKOHOSTADDRESSSPACE=$(ip a show $YAKKOMAINHOSTPORT | awk '/inet /{print $2}' | xargs ipcalc  --network --no-decorate)
+				YAKKOHOSTNETMASK=$(ip a show $YAKKOMAINHOSTPORT | awk '/inet /{print $2}' | xargs ipcalc -p --no-decorate)
+				CORPORATENOPROXY="127.0.0.1,10.128.0.0/14,172.30.0.0/16,${YAKKOHOSTADDRESSSPACE}/${YAKKOHOSTNETMASK},localhost,.cluster.local,.svc,api.${CLUSTERNAME}.${CLUSTERDOMAIN},api-int.${CLUSTERNAME}.${CLUSTERDOMAIN},.${CLUSTERNAME}.${CLUSTERDOMAIN},.${CLUSTERDOMAIN},192.168.${BASENETWORKNUM}.0/24"
+				
+				# We complement the no_proxy with what we are adding so that the cluster can form
+				export no_proxy="$no_proxy,$CORPORATENOPROXY"
+
+				{
+					echo "proxy:"
+					echo "  httpProxy: $CORPORATEPROXY"
+					echo "  httpsProxy: $CORPORATEPROXY"
+					echo "  noProxy: 127.0.0.1,10.128.0.0/14,172.30.0.0/16,${YAKKOHOSTADDRESSSPACE}/${YAKKOHOSTNETMASK},localhost,.cluster.local,.svc,api.${CLUSTERNAME}.${CLUSTERDOMAIN},api-int.${CLUSTERNAME}.${CLUSTERDOMAIN},.${CLUSTERNAME}.${CLUSTERDOMAIN},.${CLUSTERDOMAIN},192.168.${BASENETWORKNUM}.0/24"
+				} > ${CORPORATEPROXYFILE}
+
+				ask-user "Does the proxy require an additional trust bundle" N
+				if [ $? -eq 0 ]
+				then
+					echo "  additionalTrustBundle: |" >> ${CORPORATEPROXYFILE}
+
+					echo "Please copy/paste the trust bundle below or enter the path of a local file with it:"
+					read PROXYTRUSTBUNDLE
+					if [ -f "$PROXYTRUSTBUNDLE" ]
+					then
+						cat "$PROXYTRUSTBUNDLE" >> ${CORPORATEPROXYFILE}
+					else 
+						echo $PROXYTRUSTBUNDLE >> ${CORPORATEPROXYFILE}
+					fi
+				fi
+				echo
+				echo "Proxy configuration is available at ${CORPORATEPROXYFILE}"
+			fi
 		
 			### QUESTION: Cluster version
 			print-question-separator OPENSHIFT VERSION
@@ -8127,32 +8255,39 @@ process-stage-gatherclusterconfiguration() {
 			done
 			
 
-			### QUESTION: Get repository for VMs ## Stored in BUILD DEFAULTS
-			print-question-separator VM STORAGE
-
-			CAPACITYALERT=0
-
-			while true
-			do
-				echo -n "Enter the directory where you wish to place the OCP VM disks for this cluster [\"${OCPVMDIR}\"]: "
-				read RESPONSE
-				[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDIR} 
-				mkdir -p ${RESPONSE} &>/dev/null
-				if [ ! -d "$RESPONSE" ] 
-				then
-					echo "$RESPONSE is not a valid directory!" 
-					continue
-				fi
-				break
-			done
-
-			OCPVMDIR=$RESPONSE
-			OCPVMDISKDIR="$OCPVMDIR"/YAKKO-${CLUSTERNAME}-${CLUSTERDOMAIN}-${YAKKOID}
-			
-			# The next set of questions are intertwined, as they are measured against your system
-
+			LOOPQUESTIONCOUNTER=0
 			while true 
 			do
+				# The next set of questions are intertwined, as they are measured against your system
+				if [ "$LOOPQUESTIONCOUNTER" -ne 0 ]
+				then
+					QUESTIONNUM=$((QUESTIONNUM - LOOPQUESTIONCOUNTER))
+				fi
+				LOOPQUESTIONCOUNTER=0
+				
+				### QUESTION: Get repository for VMs ## Stored in BUILD DEFAULTS
+				print-question-separator VM STORAGE
+
+				CAPACITYALERT=0
+
+				while true
+				do
+					echo -n "Enter the directory where you wish to place the OCP VM disks for this cluster [\"${OCPVMDIR}\"]: "
+					read RESPONSE
+					[ -z "$RESPONSE" ] && RESPONSE=${OCPVMDIR} 
+					mkdir -p ${RESPONSE} &>/dev/null
+					if [ ! -d "$RESPONSE" ] 
+					then
+						echo "$RESPONSE is not a valid directory!" 
+						continue
+					fi
+					break
+				done
+	
+				OCPVMDIR=$RESPONSE
+				OCPVMDISKDIR="$OCPVMDIR"/YAKKO-${CLUSTERNAME}-${CLUSTERDOMAIN}-${YAKKOID}
+				
+
 				# SNOs were experimental with 4.8, yakko no longer considers this an option.
 				if [ "${OCPINSTALLMINORVERSION}" -ge 9  ]
 				then
@@ -8318,6 +8453,7 @@ process-stage-gatherclusterconfiguration() {
 					echo "Additionally you will need to allow some RAM for the bootstrap VM."
 					echo "This machine is currently defined with $(( ${BOOTSTRAPNODERAMSIZE}/1000 )) GB RAM, no testing has been done with using swap in its entirety."
 				fi
+				echo
 
 				if [ ${SYSTEMAVAILRAM} -lt ${TOTCLUSTERRAM} ]
 				then
@@ -8427,7 +8563,7 @@ process-stage-gatherclusterconfiguration() {
 		fi
 
 
-		### QUESTIONS ###QUESTIONS #questionsend :: stop here
+		### QUESTIONS ###QUESTIONS ###QUESTIONSEND #questionsend :: stop here
 
 		# Is SELinux running?
 		set-selinux-state
@@ -8519,7 +8655,19 @@ process-stage-postinstall() {
 				if [ -r ${CLUSTERPOSTINSTALL} ]
 				then	
 					print-in-colour white  "Running cluster post-install tasks at file ${CLUSTERPOSTINSTALL}" 
+					if [ $(cat ${CLUSTERPOSTINSTALL} | wc -l) -le 20 ]
+					then
+						echo
+						echo "Contents as follows:"	
+						echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+						cat ${CLUSTERPOSTINSTALL}
+						echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+					else
+						echo "(File contents too large to display"
+					fi
+					echo
 					bash ${CLUSTERPOSTINSTALL} # Yep, we run it - bash to prevent permission issues
+					
 					echo
 					print-in-colour ${YAKKOTEXTCOLOUR} "FINISHED POST-INSTALL TASKS - $(date)"
 					print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
