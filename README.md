@@ -10,10 +10,10 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 9.10 (20251111.2225)
+## CURRENT VERSION: 9.11 (20251112.0916)
 - PROXY!!! Added a new question and install option: built-in logic for supporting servers behind a proxy
 - Tested on RHEL 10 and Fedora 43
-- Tested with 4.20 
+- Tested with OpenShift 4.20 
 - Little bug fixes
 
 And slightly earlier...

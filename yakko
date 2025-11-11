@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.10
-YAKKODATE=20251111.2225
+YAKKOVERSION=9.11
+YAKKODATE=20251112.0916
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -2023,7 +2023,7 @@ build-ocp-node() {
 
 	if [ "$NODETYPE" == master -a "${MASTERNODECOUNT}" -eq 1 -a ${OCPINSTALLMINORVERSION} -ge 9 ]
 	then
-		echo "Building node with SNO topology, OCP 4.9+"
+		echo "Building single MASTER node topology, OCP 4.9+"
 		# This is a 'new' side case - this has always been optional until 4.18.18 where a hard check was 
 		# was implemented in the case of a single node openshift, where bootstrap MUST be bootstrapInPlace
 		# in install-config.yaml (see reference at top of yakko)
@@ -2069,7 +2069,7 @@ BASENETWORK=$BASENETWORK" \
 	elif [ "${OCPINSTALLMINORVERSION}" -ge 6 ]  # We are on OCP 4.6 or higher
 	then
 
-		echo "Building node 3+X topology, OCP 4.6+"
+		echo "Building [$NODETYPE] topology, OCP 4.6+"
 		# This change is also acknowdleged in the downloads stage, but it's easier to not keep track of...
 		if [ ${OCPINSTALLMINORVERSION} -ge 19 ]
 		then 
@@ -4084,7 +4084,7 @@ EOFSYSTEMDFILE
 			do
 				echo -n "How much RAM (MiB) should be allocated to this node (min: ${MINWORKERRAMSIZE}) [${DEFAULTWORKERRAMSIZE}]: "
 				read VALUE
-				[ -z "$VALUE" ] && VALUE=${WORKERRAMSIZE} 
+				[ -z "$VALUE" ] && VALUE=${DEFAULTWORKERRAMSIZE} 
 				
 				if ! [[ $VALUE =~ $NUMBERRE ]] ; then
 					echo "Error: Not a number. Try again..."
@@ -8111,6 +8111,8 @@ process-stage-gatherclusterconfiguration() {
 				fi
 				echo
 				echo "Proxy configuration is available at ${CORPORATEPROXYFILE}"
+			else
+				CORPORATEPROXY=""
 			fi
 		
 			### QUESTION: Cluster version
@@ -8633,7 +8635,7 @@ process-stage-postinstall() {
 			
 			if [ "${CLUSTERPOSTINSTALL:0:4}" == "http" ]
 			then
-				print-in-colour white "Runnin Cluster post-install tasks at URL"
+				print-in-colour white "Running Cluster post-install tasks at URL"
 				print-in-colour white "${CLUSTERPOSTINSTALL}" 
 				${WGET} -O $OCPWGETTMP ${CLUSTERPOSTINSTALL} 
 				if [ $? -eq 0 ]
@@ -8797,6 +8799,7 @@ then
 	echo "This is free software and comes with ABSOLUTELY NO WARRANTY."
 	echo "You are welcome to redistribute it under certain conditions." 
 	echo "Feel free to post comments via GitHub - https://github.com/ozchamo/YAKKO"
+	echo "or join the chat at Red Hat - #lounge-yakko"
 
 	cleanup-and-exit 0
 fi
