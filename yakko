@@ -1,8 +1,8 @@
 #!/bin/bash
 #set -x; export  PS4='Line ${LINENO}: '
 
-YAKKOVERSION=9.11
-YAKKODATE=20251112.0916
+YAKKOVERSION=9.12
+YAKKODATE=20251124.2334
 
 ###########################################################################
 # YAKKO - Yet another KVM Konfigurator for OpenShift
@@ -34,7 +34,7 @@ YAKKODIRECTORY=$(dirname $(realpath $0))
 #########################################################################
 
 # TESTED PLATFORMS FOR THIS VERSION OF YAKKO - this will be checked always on install
-TESTEDPLATFORMS="rhel 10, fedora 43"
+TESTEDPLATFORMS="rhel 10, rhel10.1, fedora 43"
 
 #########################################################################
 ## START: USER CONFIGURABLE PARAMETERS - you can also change through the use of a template
@@ -347,15 +347,18 @@ change-console-logo() {
 			${WGET} -O /tmp/yakko-custom-logo.png  https://raw.githubusercontent.com/ozchamo/YAKKO/master/openshift-yakko-logo-4.19.png &>/dev/null
 		fi
 	fi
+	CONSOLELOGOAVAILABLE=$?
 
-	if [ $? -eq 0 ]
+	echo
+	echo "Updating OpenShift Console logo..."
+	if [ $CONSOLELOGOAVAILABLE -eq 0 ]
 	then
-		echo "Updating OpenShift Console logo!"
-		${OCCOMMAND} delete configmap yakko-custom-logo -n openshift-config 
-		${OCCOMMAND} create configmap yakko-custom-logo --from-file /tmp/yakko-custom-logo.png -n openshift-config
-		${OCCOMMAND} patch consoles.operator.openshift.io/cluster --type=merge -p '{"spec":{"customization":{"customLogoFile":{"name":"yakko-custom-logo"}}}}'
-		${OCCOMMAND} patch consoles.operator.openshift.io/cluster --type=merge -p '{"spec":{"customization":{"customLogoFile":{"key":"yakko-custom-logo.png"}}}}'
+		${OCCOMMAND} delete configmap yakko-custom-logo -n openshift-config &>/dev/null
+		${OCCOMMAND} create configmap yakko-custom-logo --from-file /tmp/yakko-custom-logo.png -n openshift-config &>/dev/null
+		${OCCOMMAND} patch consoles.operator.openshift.io/cluster --type=merge -p '{"spec":{"customization":{"customLogoFile":{"name":"yakko-custom-logo"}}}}' &>/dev/null
+		${OCCOMMAND} patch consoles.operator.openshift.io/cluster --type=merge -p '{"spec":{"customization":{"customLogoFile":{"key":"yakko-custom-logo.png"}}}}' &>/dev/null
 		rm /tmp/yakko-custom-logo.png &>/dev/null
+		echo "The OpenShift console should now display the OpenShift+YAKKO logo."
 	else
 		echo "Could not update OpenShift Console logo - failed to download from github."
 	fi
@@ -365,6 +368,7 @@ getlatest() {
 	# a little backdoor to retrieve the latest...
 	if [ $(ls -id | awk '{ print $1 }') -ne 8650753 ]
 	then
+		mv yakko yakko.$YAKKOVERSION.$(date +%d%m%Y-%H%M)
 		scp yakko.home://YAKKO/yakko .
 		chmod 554 ./yakko
 	else
@@ -2186,6 +2190,7 @@ csr-approval() {
 	then
 		if [  $CSRAPPROVALPID -ne 0 ]
 		then
+			echo
 			echo "Terminating automated CSR approval process..."
 			kill -s SIGTERM $CSRAPPROVALPID &>/dev/null
 			CSRAPPROVALPID=0
@@ -3188,7 +3193,6 @@ update-haproxy-config-file() {
 	WORKERNODESAVAILABLE=$(virsh list --all | grep ${YAKKOID} | grep -c node)
 
 	echo "Rebuilding HAProxy config file..."
-	sleep 1
 
 	# Defaults example at
 	# https://docs.openshift.com/container-platform/4.8/installing/installing_bare_metal/installing-bare-metal-network-customizations.html
@@ -3232,8 +3236,8 @@ update-haproxy-config-file() {
 	# The above leaves the latest file in play for later
 	cp ${STUBFILES}/haproxy.cfg ${SYSTEMSTUBFILE_HAPROXY}
 
-	echo "Restarting HAProxy"
-	process-system-service-state restart haproxy 
+	echo "Restarting HAProxy..."
+	process-system-service-state restart haproxy quiet
 	echo "HAProxy restarted."
 }
 
@@ -4910,11 +4914,17 @@ EOFSYSTEMDFILE
 		if  [ "$1" == "force" ]
 		then
 			# Someone's feeling lucky
-			print-in-colour red "FORCE REQUESTED - NO QUESTIONS ASKED!"
-			DELETECLUSTERMODE=0
-			DELETECLUSTERFORCE=0
-			DELETECLUSTERNAME=${CLUSTERFQDN}
-			yakko-process-stages rollback
+			# But here's a bone to protect a cluster you don't want to nuke
+			if [ -e ${YAKKODIRECTORY}/.protect ]
+			then
+				cleanup-and-exit 1 orange "This cluster is PROTECTED (file .protect in place) and cannot be force deleted"
+			else
+				print-in-colour red "FORCE REQUESTED - NO QUESTIONS ASKED!"
+				DELETECLUSTERMODE=0
+				DELETECLUSTERFORCE=0
+				DELETECLUSTERNAME=${CLUSTERFQDN}
+				yakko-process-stages rollback
+			fi
 		fi
 
 		if  [ "$1" == "${CLUSTERFQDN}" ]
@@ -5876,30 +5886,42 @@ yakko-ops-operations() {
 
 				o|O) ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get co --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig" 2>/dev/null ;;
 
-				p|P) PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig 2>/dev/null | grep ^csr | grep Pending | cut -f1 -d' '" 2>/dev/null)
-
-					if [ -z "$PENDINGCERTIFICATES" ]
+				p|P) check-api-server
+					if [ $? -eq 0 ] 
 					then
-						echo "There are no pending certificates requiring approval."
-					else
-						echo "The following certificates are pending approval:"
-						for CERTIFICATE in $PENDINGCERTIFICATES
-						do
-							echo $CERTIFICATE       
-						done
-					fi ;;
+						PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig 2>/dev/null | grep ^csr | grep Pending | cut -f1 -d' '" 2>/dev/null)
 
-				a|A) PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig 2>/dev/null | grep ^csr | grep Pending | cut -f1 -d' ' " 2>/dev/null)
-					if [ -z "$PENDINGCERTIFICATES" ]
-					then
-						echo "There are no certificates requiring approval."
+						if [ -z "$PENDINGCERTIFICATES" ]
+						then
+							echo "There are no pending certificates requiring approval."
+						else
+							echo "The following certificates are pending approval:"
+							for CERTIFICATE in $PENDINGCERTIFICATES
+							do
+								echo $CERTIFICATE       
+							done
+						fi 
 					else
-						echo "Approving pending certificates from within master-0:"
-						for CERTIFICATE in $PENDINGCERTIFICATES
-						do
-							ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc adm certificate approve ${CERTIFICATE:0:9} --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig" 2>/dev/null
-						done
-					fi ;;
+						echo "The OpenShift API server does not appear to be operational"
+					fi;;
+
+				a|A) check-api-server
+					if [ $? -eq 0 ] 
+					then
+						PENDINGCERTIFICATES=$(ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc get csr --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig 2>/dev/null | grep ^csr | grep Pending | cut -f1 -d' ' " 2>/dev/null)
+						if [ -z "$PENDINGCERTIFICATES" ]
+						then
+							echo "There are no certificates requiring approval."
+						else
+							echo "Approving pending certificates from within master-0:"
+							for CERTIFICATE in $PENDINGCERTIFICATES
+							do
+								ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "oc adm certificate approve ${CERTIFICATE:0:9} --kubeconfig=/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/lb-int.kubeconfig" 2>/dev/null
+							done
+						fi 
+					else
+						echo "The OpenShift API server does not appear to be operational"
+					fi;;
 
 				t|T) echo -n "The time on master-0 is:  "  
 					ssh -i ${OCPSSHKEY} -o "StrictHostKeyChecking no" -t core@${MASTER0IP} sudo "date" 2>/dev/null ;;
@@ -7253,6 +7275,7 @@ process-stage-build-ocp-workernodes() {
 				while [ $NODESTOBUILD -ne 0 ]
 				do
 					((NODESTOBUILD--))
+					# Nodecount keeps track of the next worker node number for when adding a new node
 					((NODECOUNT++))
 					sed -i "/NODECOUNT=.*/c\NODECOUNT=${NODECOUNT}" ${CLUSTERCONFIGFILE} 2>/dev/null
 		
@@ -7585,6 +7608,8 @@ process-stage-waitforocpinstalltocomplete() {
 				update-haproxy-config-file 
 
 				change-console-logo
+				chmod 644 $CLUSTERSETUPDIR/auth/kubeconfig
+				cp $CLUSTERSETUPDIR/auth/kubeconfig $YAKKODIRECTORY
 
 				# Cluster is done! We report outcome
 				print-in-colour ${YAKKOTEXTCOLOUR} ${SEPARATIONLINE}
@@ -7622,6 +7647,10 @@ process-stage-waitforocpinstalltocomplete() {
 					echo "WORKERNODECOUNT=${WORKERNODECOUNT}"
 					echo "MASTERRAMSIZE=${MASTERRAMSIZE}"
 					echo "WORKERRAMSIZE=${WORKERRAMSIZE}"
+					echo "MASTERVCPUS=${MASTERVCPUS}"
+					echo "WORKERVCPUS=${WORKERVCPUS}"
+					echo "MASTERDISKSIZE=${MASTERDISKSIZE}"
+					echo "WORKERDISKSIZE=${WORKERDISKSIZE}"
 					echo "OCPVERSION=${OCPVERSION}"
 					echo "OCPINSTLOGLEVEL=${OCPINSTLOGLEVEL}"
 					echo "USEYAKKODNSMASQ=${USEYAKKODNSMASQ}"
@@ -8098,18 +8127,29 @@ process-stage-gatherclusterconfiguration() {
 				ask-user "Does the proxy require an additional trust bundle" N
 				if [ $? -eq 0 ]
 				then
-					echo "  additionalTrustBundle: |" >> ${CORPORATEPROXYFILE}
+					echo "additionalTrustBundle: |" >> ${CORPORATEPROXYFILE}
 
-					echo "Please copy/paste the trust bundle below or enter the path of a local file with it:"
-					read PROXYTRUSTBUNDLE
-					if [ -f "$PROXYTRUSTBUNDLE" ]
-					then
-						cat "$PROXYTRUSTBUNDLE" >> ${CORPORATEPROXYFILE}
-					else 
-						echo $PROXYTRUSTBUNDLE >> ${CORPORATEPROXYFILE}
-					fi
+					while true
+					do
+						echo -n "Please enter the path of a local file with the trust bundle: "
+						read PROXYTRUSTBUNDLE
+						if [ -r "$PROXYTRUSTBUNDLE" ]
+						then
+							break
+						else
+							print-in-colour orange "Invalid file or file permissions for $PROXYTRUSTBUNDLE"
+						fi
+					done
+					
+					# The lines in the bundle have to have two spaces at the front, would you believe
+					while read line
+					do
+				        if [ "${line:0:2}" != "  " ]
+				        then
+             				   echo $line | sed -e "s/^/  /"
+   					     fi
+					done < $PROXYTRUSTBUNDLE >> ${CORPORATEPROXYFILE}
 				fi
-				echo
 				echo "Proxy configuration is available at ${CORPORATEPROXYFILE}"
 			else
 				CORPORATEPROXY=""
@@ -8665,7 +8705,7 @@ process-stage-postinstall() {
 						cat ${CLUSTERPOSTINSTALL}
 						echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 					else
-						echo "(File contents too large to display"
+						echo "(File contents too large to display)"
 					fi
 					echo
 					bash ${CLUSTERPOSTINSTALL} # Yep, we run it - bash to prevent permission issues
