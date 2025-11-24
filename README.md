@@ -12,8 +12,9 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ## CURRENT VERSION: 9.12 (20251124.2334)
 - PROXY!!! Added a new question and install option: built-in logic for supporting servers behind a proxy
-- Tested on RHEL 10 and Fedora 43
+- Tested on RHEL 10, RHEL 10.1 and Fedora 43
 - Tested with OpenShift 4.20 
+- Surface kubeconfig to YAKKO directory with read permissions (request fulfilled!)
 - Little bug fixes
 
 And slightly earlier...
