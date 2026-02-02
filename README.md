@@ -10,14 +10,18 @@ There are plenty of cookbooks out there and they require that you do a lot of *m
 
 ---
 
-## CURRENT VERSION: 9.12 (20251124.2334)
-- PROXY!!! Added a new question and install option: built-in logic for supporting servers behind a proxy
+## CURRENT VERSION: 9.20 (20260202.1541)
+- Added "infra adddisk" option - you can now add virtual disks (/dev/vdX) to a node
+  (Particularly useful when hosting large languange models)
+  See KB: https://access.redhat.com/solutions/4952011
 - Tested on RHEL 10, RHEL 10.1 and Fedora 43
 - Tested with OpenShift 4.20 
 - Surface kubeconfig to YAKKO directory with read permissions (request fulfilled!)
 - Little bug fixes
 
 And slightly earlier...
+- 9.12 - added support for using a proxy for everything (corporate needs usually)
+- Surface kubeconfig to YAKKO directory with read permissions (request fulfilled!)
 - 9.02 - added option 'ops -> changelogo' to pimp your OpenShift console your way!
 - Named it 9.0 because there is no guarantee it can be replaced in-place
 - Tested on RHEL 9.6, RHEL 10 and Fedora 42
